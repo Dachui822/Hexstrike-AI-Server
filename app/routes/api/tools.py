@@ -16,13 +16,31 @@ def list_tools():
         "name": t.name, "display_name": t.display_name,
         "category": t.category, "available": t.is_available,
         "version": t.installed_version,
-        "last_check": t.last_health_check.isoformat() if t.last_health_check else None
+        "last_check": t.last_health_check.isoformat() if t.last_health_check else None,
+        "health_check_cmd": t.health_check_cmd
     } for t in tools])
 
 @bp.route('/<tool_name>/health', methods=['POST'])
 def trigger_health_check(tool_name):
     result = ToolRegistry.check_health(tool_name)
     return jsonify(result)
+
+@bp.route('/<tool_name>', methods=['PUT'])
+def update_tool(tool_name):
+    """更新工具配置（支持修改健康检测命令）"""
+    data = request.get_json()
+    tool = db.session.get(Tool, tool_name)
+    if not tool:
+        return jsonify({"error": "Tool not found"}), 404
+    
+    if 'health_check_cmd' in data:
+        tool.health_check_cmd = data['health_check_cmd']
+    
+    db.session.commit()
+    return jsonify({
+        "success": True,
+        "health_check_cmd": tool.health_check_cmd
+    })
 
 @bp.route('/health/check-all', methods=['POST'])
 def check_all_tools():
