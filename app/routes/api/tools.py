@@ -15,7 +15,8 @@ def list_tools():
     return jsonify([{
         "name": t.name, "display_name": t.display_name,
         "category": t.category, "available": t.is_available,
-        "version": t.installed_version
+        "version": t.installed_version,
+        "last_check": t.last_health_check.isoformat() if t.last_health_check else None
     } for t in tools])
 
 @bp.route('/<tool_name>/health', methods=['POST'])
