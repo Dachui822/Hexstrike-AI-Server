@@ -15,7 +15,7 @@ class Tool(db.Model):
     
     is_available = db.Column(Boolean, default=False)
     last_health_check = db.Column(DateTime, nullable=True)
-    installed_version = db.Column(String(32), nullable=True)
+    installed_version = db.Column(String(255), nullable=True)
     
     created_at = db.Column(DateTime, server_default=func.now())
     updated_at = db.Column(DateTime, server_default=func.now(), onupdate=func.now())
