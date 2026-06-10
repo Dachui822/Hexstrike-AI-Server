@@ -169,18 +169,27 @@ class ToolRegistry:
 
     @staticmethod
     def init_tools():
-        """初始化默认工具到数据库"""
-        count = 0
+        """初始化并同步默认工具到数据库"""
+        count_new = 0
+        count_updated = 0
         for t_data in DEFAULT_TOOLS:
-            if not db.session.get(Tool, t_data['name']):
+            tool = db.session.get(Tool, t_data['name'])
+            if not tool:
                 tool = Tool(**t_data)
                 db.session.add(tool)
-                count += 1
-        if count > 0:
+                count_new += 1
+            else:
+                # 同步更新已存在工具的配置（依赖类型、检测命令等）
+                if tool.dependencies != t_data.get('dependencies') or tool.health_check_cmd != t_data.get('health_check_cmd'):
+                    tool.dependencies = t_data.get('dependencies')
+                    tool.health_check_cmd = t_data.get('health_check_cmd')
+                    count_updated += 1
+        
+        if count_new > 0 or count_updated > 0:
             db.session.commit()
-            logger.info(f"✅ Default tools initialized ({count} new tools)")
+            logger.info(f"✅ Tool registry synced: {count_new} new, {count_updated} updated")
             
-            # 初始化后立即执行一次健康检测
+            # 初始化或更新后立即执行一次健康检测
             logger.info("🏥 Running initial health check for all tools...")
             try:
                 ToolRegistry.check_all_health()
@@ -188,7 +197,7 @@ class ToolRegistry:
             except Exception as e:
                 logger.error(f"❌ Initial health check failed: {e}")
         else:
-            logger.info("ℹ️ All tools already exist in database")
+            logger.info("ℹ️ All tools already exist and are up-to-date")
 
     @staticmethod
     def check_health(tool_name: str) -> dict:
