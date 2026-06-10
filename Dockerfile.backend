@@ -1,0 +1,27 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    curl \
+    net-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY app/ ./app/
+COPY run.py .
+COPY gunicorn.conf.py .
+
+# Security: Create non-root user
+RUN useradd -m hexstrike && chown -R hexstrike:hexstrike /app
+USER hexstrike
+
+EXPOSE 8888
+
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "run:app"]
