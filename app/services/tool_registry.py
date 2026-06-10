@@ -2,8 +2,12 @@ import json
 import os
 import subprocess
 import logging
+import threading
+import time
+from datetime import datetime
 from app.extensions import db
 from app.models.tool import Tool
+from app.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +161,12 @@ DEFAULT_TOOLS = [
 ]
 
 class ToolRegistry:
+    # 自动健康检测相关类变量
+    _auto_check_thread = None
+    _auto_check_running = False
+    _last_check_time = None
+    _check_stats = {"total": 0, "available": 0, "unavailable": 0, "errors": 0}
+
     @staticmethod
     def init_tools():
         """初始化默认工具到数据库"""
@@ -173,7 +183,7 @@ class ToolRegistry:
         tool = db.session.get(Tool, tool_name)
         if not tool:
             return {"available": False, "error": "Tool not registered"}
-            
+
         try:
             for pkg_type, pkgs in (tool.dependencies or {}).items():
                 if pkg_type == 'apt':
@@ -184,8 +194,8 @@ class ToolRegistry:
                     for pkg in pkgs:
                         if subprocess.run(['pip', 'show', pkg], capture_output=True).returncode != 0:
                             raise Exception(f"Missing pip package: {pkg}")
-                            
-            result = subprocess.run(tool.health_check_cmd.split(), capture_output=True, text=True, timeout=10)
+
+            result = subprocess.run(tool.health_check_cmd.split(), capture_output=True, text=True, timeout=Config.HEALTH_CHECK_TIMEOUT)
             if result.returncode == 0:
                 version_line = result.stdout.split('\n')[0] if result.stdout else "Unknown"
                 tool.is_available = True
@@ -193,18 +203,125 @@ class ToolRegistry:
             else:
                 tool.is_available = False
                 tool.installed_version = None
-                
+
         except Exception as e:
             tool.is_available = False
             tool.installed_version = None
             logger.warning(f"Health check failed for {tool_name}: {e}")
-            
+
         tool.last_health_check = db.func.now()
         db.session.commit()
-        
+
         return {
             "name": tool.name,
             "available": tool.is_available,
             "version": tool.installed_version,
             "last_check": tool.last_health_check.isoformat() if tool.last_health_check else None
+        }
+
+    @staticmethod
+    def check_all_health() -> dict:
+        """批量检查所有工具健康状态"""
+        tools = Tool.query.all()
+        results = []
+        stats = {"total": len(tools), "available": 0, "unavailable": 0, "errors": 0}
+
+        for tool in tools:
+            try:
+                result = ToolRegistry.check_health(tool.name)
+                results.append(result)
+                if result.get("available"):
+                    stats["available"] += 1
+                else:
+                    stats["unavailable"] += 1
+            except Exception as e:
+                logger.error(f"Error checking {tool.name}: {e}")
+                results.append({"name": tool.name, "available": False, "error": str(e)})
+                stats["errors"] += 1
+
+        ToolRegistry._check_stats = stats
+        ToolRegistry._last_check_time = datetime.now()
+
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "stats": stats,
+            "results": results
+        }
+
+    @staticmethod
+    def _auto_health_check_loop():
+        """后台自动健康检测循环"""
+        logger.info(f"🔄 Auto health check started (interval: {Config.HEALTH_CHECK_INTERVAL}s)")
+        
+        while ToolRegistry._auto_check_running:
+            try:
+                # 执行批量检测
+                logger.info("🏥 Starting automatic health check for all tools...")
+                result = ToolRegistry.check_all_health()
+                
+                stats = result["stats"]
+                logger.info(
+                    f"✅ Health check completed | "
+                    f"Total: {stats['total']} | "
+                    f"Available: {stats['available']} | "
+                    f"Unavailable: {stats['unavailable']} | "
+                    f"Errors: {stats['errors']}"
+                )
+                
+                # 等待下一个周期
+                for _ in range(Config.HEALTH_CHECK_INTERVAL):
+                    if not ToolRegistry._auto_check_running:
+                        break
+                    time.sleep(1)
+                    
+            except Exception as e:
+                logger.error(f"❌ Error in auto health check loop: {e}")
+                time.sleep(60)  # 出错后等待1分钟再重试
+
+        logger.info("🔄 Auto health check stopped")
+
+    @staticmethod
+    def start_auto_health_check():
+        """启动自动健康检测"""
+        if ToolRegistry._auto_check_running:
+            logger.warning("⚠️ Auto health check is already running")
+            return False
+
+        if not Config.AUTO_HEALTH_CHECK:
+            logger.info("ℹ️ Auto health check is disabled in config")
+            return False
+
+        ToolRegistry._auto_check_running = True
+        ToolRegistry._auto_check_thread = threading.Thread(
+            target=ToolRegistry._auto_health_check_loop,
+            daemon=True,
+            name="HealthCheckScheduler"
+        )
+        ToolRegistry._auto_check_thread.start()
+        logger.info("✅ Auto health check scheduler started")
+        return True
+
+    @staticmethod
+    def stop_auto_health_check():
+        """停止自动健康检测"""
+        if not ToolRegistry._auto_check_running:
+            logger.warning("⚠️ Auto health check is not running")
+            return False
+
+        ToolRegistry._auto_check_running = False
+        if ToolRegistry._auto_check_thread:
+            ToolRegistry._auto_check_thread.join(timeout=10)
+        
+        logger.info("✅ Auto health check scheduler stopped")
+        return True
+
+    @staticmethod
+    def get_auto_check_status() -> dict:
+        """获取自动健康检测状态"""
+        return {
+            "enabled": Config.AUTO_HEALTH_CHECK,
+            "running": ToolRegistry._auto_check_running,
+            "interval": Config.HEALTH_CHECK_INTERVAL,
+            "last_check": ToolRegistry._last_check_time.isoformat() if ToolRegistry._last_check_time else None,
+            "stats": ToolRegistry._check_stats
         }

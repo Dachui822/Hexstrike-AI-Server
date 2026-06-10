@@ -40,7 +40,12 @@ class Config:
     # Task Pool
     MAX_WORKERS = int(os.environ.get("MAX_WORKERS", 10))
     TASK_TIMEOUT = int(os.environ.get("TASK_TIMEOUT", 3600))
-    
+
+    # Tool Health Check
+    AUTO_HEALTH_CHECK = os.environ.get("AUTO_HEALTH_CHECK", "true").lower() == "true"
+    HEALTH_CHECK_INTERVAL = int(os.environ.get("HEALTH_CHECK_INTERVAL", 300))  # 默认5分钟
+    HEALTH_CHECK_TIMEOUT = int(os.environ.get("HEALTH_CHECK_TIMEOUT", 30))  # 单个工具检测超时
+
     # MCP
     MCP_VERSION = "2.0"
     MCP_SERVER_NAME = "HexStrike AI"
