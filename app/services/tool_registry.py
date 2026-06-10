@@ -170,12 +170,25 @@ class ToolRegistry:
     @staticmethod
     def init_tools():
         """初始化默认工具到数据库"""
+        count = 0
         for t_data in DEFAULT_TOOLS:
             if not db.session.get(Tool, t_data['name']):
                 tool = Tool(**t_data)
                 db.session.add(tool)
-        db.session.commit()
-        logger.info("✅ Default tools initialized")
+                count += 1
+        if count > 0:
+            db.session.commit()
+            logger.info(f"✅ Default tools initialized ({count} new tools)")
+            
+            # 初始化后立即执行一次健康检测
+            logger.info("🏥 Running initial health check for all tools...")
+            try:
+                ToolRegistry.check_all_health()
+                logger.info("✅ Initial health check completed")
+            except Exception as e:
+                logger.error(f"❌ Initial health check failed: {e}")
+        else:
+            logger.info("ℹ️ All tools already exist in database")
 
     @staticmethod
     def check_health(tool_name: str) -> dict:
@@ -253,10 +266,35 @@ class ToolRegistry:
         """后台自动健康检测循环"""
         logger.info(f"🔄 Auto health check started (interval: {Config.HEALTH_CHECK_INTERVAL}s)")
         
+        # 启动时立即执行一次检测
+        try:
+            logger.info("🏥 Running initial health check on scheduler start...")
+            result = ToolRegistry.check_all_health()
+            stats = result["stats"]
+            logger.info(
+                f"✅ Initial health check completed | "
+                f"Total: {stats['total']} | "
+                f"Available: {stats['available']} | "
+                f"Unavailable: {stats['unavailable']} | "
+                f"Errors: {stats['errors']}"
+            )
+        except Exception as e:
+            logger.error(f"❌ Initial health check failed: {e}")
+        
+        # 进入定时循环
         while ToolRegistry._auto_check_running:
             try:
+                # 等待下一个周期
+                for _ in range(Config.HEALTH_CHECK_INTERVAL):
+                    if not ToolRegistry._auto_check_running:
+                        break
+                    time.sleep(1)
+                
+                if not ToolRegistry._auto_check_running:
+                    break
+                    
                 # 执行批量检测
-                logger.info("🏥 Starting automatic health check for all tools...")
+                logger.info("🏥 Starting periodic health check for all tools...")
                 result = ToolRegistry.check_all_health()
                 
                 stats = result["stats"]
@@ -267,12 +305,6 @@ class ToolRegistry:
                     f"Unavailable: {stats['unavailable']} | "
                     f"Errors: {stats['errors']}"
                 )
-                
-                # 等待下一个周期
-                for _ in range(Config.HEALTH_CHECK_INTERVAL):
-                    if not ToolRegistry._auto_check_running:
-                        break
-                    time.sleep(1)
                     
             except Exception as e:
                 logger.error(f"❌ Error in auto health check loop: {e}")
