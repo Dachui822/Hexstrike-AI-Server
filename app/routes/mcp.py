@@ -102,28 +102,31 @@ def mcp_handler():
                         output_content = f"[Error reading output file: {str(e)}]"
                 
                 # 构建返回结果
+                # 获取状态值 (兼容 SQLAlchemy 返回字符串或枚举)
+                status_val = task.status.value if hasattr(task.status, 'value') else str(task.status) if task.status else 'unknown'
+
                 result = {
                     "task_id": task.id,
                     "tool": task.tool_name,
                     "target": task.target,
-                    "status": task.status.value if task.status else "unknown",
+                    "status": status_val,
                     "progress": task.progress,
                     "created_at": task.created_at.isoformat() if task.created_at else None,
                     "completed_at": task.completed_at.isoformat() if task.completed_at else None,
                 }
 
-                if task.status and task.status.value == 'SUCCESS':
+                if status_val == 'SUCCESS':
                     # 任务成功：返回工具扫描的结果内容 (output)
                     result["result"] = output_content if output_content else "[No output generated]"
                     result["message"] = "Task completed successfully. Here is the scan result:"
-                elif task.status and task.status.value == 'FAILED':
+                elif status_val == 'FAILED':
                     # 任务失败：返回工具执行日志以便排查 (logs)
                     result["logs"] = log_messages
                     result["error"] = task.error_message
                     result["message"] = f"Task failed. Here are the execution logs for debugging: {task.error_message or ''}"
                 else:
                     # 任务运行中
-                    result["message"] = f"Task is {task.status.value if task.status else 'unknown'}. Progress: {task.progress}%"
+                    result["message"] = f"Task is {status_val}. Progress: {task.progress}%"
 
                 return jsonify({
                     "jsonrpc": "2.0", "id": req_id,
