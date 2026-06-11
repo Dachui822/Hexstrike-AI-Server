@@ -3,7 +3,8 @@ import uuid
 import time
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from app.extensions import db, redis_client
+from app.extensions import db
+import app.extensions as extensions
 from app.models.task import Task, TaskStatus, TaskLog
 from app.services.tool_executor import ToolExecutor
 
@@ -45,7 +46,8 @@ class TaskManager:
         
         # 2. 写入 Redis 队列 (ZSET 支持优先级)
         score = priority + time.time()
-        redis_client.zadd("task:queue", {task_id: score})
+        if extensions.redis_client:
+            extensions.redis_client.zadd("task:queue", {task_id: score})
         
         # 3. 触发调度器
         self._dispatch()
@@ -59,13 +61,16 @@ class TaskManager:
         if len(self.running_tasks) >= self.max_workers:
             return
 
-        tasks = redis_client.zrangebyscore("task:queue", "-inf", "+inf", start=0, num=1)
+        if not extensions.redis_client:
+            return
+
+        tasks = extensions.redis_client.zrangebyscore("task:queue", "-inf", "+inf", start=0, num=1)
         if not tasks:
             return
 
         task_id = tasks[0]
 
-        if redis_client.set(f"task:{task_id}:lock", "1", nx=True, ex=60):
+        if extensions.redis_client.set(f"task:{task_id}:lock", "1", nx=True, ex=60):
             self._execute_task(task_id)
 
     def _execute_task(self, task_id: str):
@@ -81,9 +86,10 @@ class TaskManager:
             task.status = TaskStatus.RUNNING
             task.started_at = db.func.now()
             db.session.commit()
-            
-            redis_client.hset(f"task:{task_id}", mapping={"status": "RUNNING", "progress": "0.0"})
-            redis_client.zrem("task:queue", task_id)
+
+            if extensions.redis_client:
+                extensions.redis_client.hset(f"task:{task_id}", mapping={"status": "RUNNING", "progress": "0.0"})
+                extensions.redis_client.zrem("task:queue", task_id)
 
             future = self.executor.submit(
                 self.executor_instance.run, 
@@ -126,7 +132,8 @@ class TaskManager:
             task.completed_at = db.func.now()
             db.session.commit()
 
-            redis_client.delete(f"task:{task_id}:lock")
+            if extensions.redis_client:
+                extensions.redis_client.delete(f"task:{task_id}:lock")
             self.running_tasks.pop(task_id, None)
             self._dispatch()
 
@@ -142,9 +149,13 @@ class TaskManager:
             if not task:
                 return False
 
-            # 移除队列和锁
-            redis_client.zrem("task:queue", task_id)
-            redis_client.delete(f"task:{task_id}:lock")
+            # 移除队列和锁 (兼容 Redis 未启动的情况)
+            if extensions.redis_client:
+                try:
+                    extensions.redis_client.zrem("task:queue", task_id)
+                    extensions.redis_client.delete(f"task:{task_id}:lock")
+                except Exception as e:
+                    logger.warning(f"Redis cleanup failed for {task_id}: {e}")
 
             if task.status == TaskStatus.RUNNING:
                 # 运行中的任务标记为取消，不物理删除

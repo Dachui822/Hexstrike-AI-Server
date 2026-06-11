@@ -2,7 +2,8 @@ import subprocess
 import logging
 import time
 import os
-from app.extensions import redis_client, db
+from app.extensions import db
+import app.extensions as extensions
 from app.models.task import TaskLog, Task
 from app.models.tool import Tool
 
@@ -69,15 +70,17 @@ class ToolExecutor:
 
     def _push_log(self, task_id: str, message: str, source: str):
         """推送日志到 MySQL 和 Redis"""
-        redis_client.lpush(f"task:{task_id}:logs", message)
-        redis_client.publish("hexstrike:logs", f"{task_id}|{message}")
-        
+        if extensions.redis_client:
+            extensions.redis_client.lpush(f"task:{task_id}:logs", message)
+            extensions.redis_client.publish("hexstrike:logs", f"{task_id}|{message}")
+
         log_entry = TaskLog(task_id=task_id, message=message, source=source, level='INFO')
         db.session.add(log_entry)
         db.session.commit()
 
     def _update_progress(self, task_id: str, process):
         """更新进度 (模拟)"""
-        current = int(time.time() % 100) 
-        redis_client.hset(f"task:{task_id}", mapping={"progress": str(current)})
-        redis_client.publish("hexstrike:progress", f"{task_id}|{current}")
+        current = int(time.time() % 100)
+        if extensions.redis_client:
+            extensions.redis_client.hset(f"task:{task_id}", mapping={"progress": str(current)})
+            extensions.redis_client.publish("hexstrike:progress", f"{task_id}|{current}")
