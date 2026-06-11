@@ -11,9 +11,20 @@ logger = logging.getLogger(__name__)
 
 class TaskManager:
     def __init__(self, max_workers=10):
-        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.max_workers = max_workers  # 动态并发限制
+        # 线程池保持足够大，实际并发由 max_workers 控制
+        self.executor = ThreadPoolExecutor(max_workers=50) 
         self.running_tasks = {}  # task_id -> Future object
         self.executor_instance = ToolExecutor()
+
+    def update_max_workers(self, new_limit: int):
+        """动态更新最大并发数"""
+        if new_limit < 1:
+            new_limit = 1
+        self.max_workers = new_limit
+        logger.info(f"🔄 Max concurrent tasks updated to {new_limit}")
+        # 触发调度，如果新限制允许，可能启动等待中的任务
+        self._dispatch()
 
     def submit_task(self, tool_name: str, target: str, params: dict, priority: int = 0, mcp_request_id: str = None) -> str:
         """提交任务到任务池"""
@@ -44,7 +55,8 @@ class TaskManager:
 
     def _dispatch(self):
         """调度器：从队列获取任务并提交给线程池"""
-        if len(self.running_tasks) >= self.executor._max_workers:
+        # 检查当前运行任务数是否达到限制
+        if len(self.running_tasks) >= self.max_workers:
             return
 
         tasks = redis_client.zrangebyscore("task:queue", "-inf", "+inf", start=0, num=1)
@@ -52,7 +64,7 @@ class TaskManager:
             return
 
         task_id = tasks[0]
-        
+
         if redis_client.set(f"task:{task_id}:lock", "1", nx=True, ex=60):
             self._execute_task(task_id)
 
@@ -87,10 +99,18 @@ class TaskManager:
         """任务完成回调"""
         from app import create_app
         app = create_app()
-        
+
         with app.app_context():
             task = db.session.get(Task, task_id)
+            if not task:
+                return
+
             try:
+                # 检查是否被取消
+                if task.status == TaskStatus.CANCELLED:
+                    logger.info(f"Task {task_id} was cancelled.")
+                    return
+
                 result = future.result()
                 if result.get("success"):
                     task.status = TaskStatus.SUCCESS
@@ -102,14 +122,63 @@ class TaskManager:
             except Exception as e:
                 task.status = TaskStatus.FAILED
                 task.error_message = str(e)
-            
+
             task.completed_at = db.func.now()
             db.session.commit()
-            
+
             redis_client.delete(f"task:{task_id}:lock")
             self.running_tasks.pop(task_id, None)
             self._dispatch()
-            
+
             logger.info(f"Task {task_id} completed with status {task.status}")
+
+    def delete_task(self, task_id: str) -> bool:
+        """删除任务"""
+        from app import create_app
+        app = create_app()
+        
+        with app.app_context():
+            task = db.session.get(Task, task_id)
+            if not task:
+                return False
+
+            # 移除队列和锁
+            redis_client.zrem("task:queue", task_id)
+            redis_client.delete(f"task:{task_id}:lock")
+
+            if task.status == TaskStatus.RUNNING:
+                # 运行中的任务标记为取消，不物理删除
+                task.status = TaskStatus.CANCELLED
+                task.completed_at = db.func.now()
+                logger.info(f"Task {task_id} marked as cancelled.")
+            else:
+                # 物理删除非运行中任务
+                db.session.delete(task)
+                logger.info(f"Task {task_id} deleted.")
+            
+            db.session.commit()
+            return True
+
+    def update_task(self, task_id: str, params: dict) -> bool:
+        """更新任务参数（仅支持 PENDING 状态）"""
+        from app import create_app
+        app = create_app()
+        
+        with app.app_context():
+            task = db.session.get(Task, task_id)
+            if not task:
+                return False
+
+            if task.status != TaskStatus.PENDING:
+                return False
+
+            # 合并参数
+            if task.params:
+                task.params.update(params)
+            else:
+                task.params = params
+            
+            db.session.commit()
+            return True
 
 task_manager = TaskManager()

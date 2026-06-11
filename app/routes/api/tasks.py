@@ -37,7 +37,7 @@ def list_tasks():
         "pages": pagination.pages,
         "tasks": [{
             "id": t.id, "tool": t.tool_name, "target": t.target,
-            "status": t.status.value, "progress": t.progress,
+            "status": t.status.value.lower() if t.status else "unknown", "progress": t.progress,
             "created_at": t.created_at.isoformat()
         } for t in pagination.items]
     })
@@ -47,15 +47,57 @@ def get_task(task_id):
     task = db.session.get(Task, task_id)
     if not task:
         return jsonify({"error": "Task not found"}), 404
-        
+
     return jsonify({
         "id": task.id,
         "tool": task.tool_name,
         "target": task.target,
-        "status": task.status.value,
+        "status": task.status.value.lower() if task.status else "unknown",
         "progress": task.progress,
         "params": task.params,
         "error": task.error_message,
         "created_at": task.created_at.isoformat(),
         "completed_at": task.completed_at.isoformat() if task.completed_at else None
+    })
+
+@bp.route('/<task_id>', methods=['DELETE'])
+def delete_task(task_id):
+    """删除任务"""
+    success = task_manager.delete_task(task_id)
+    if success:
+        return jsonify({"success": True, "message": "Task deleted or cancelled"})
+    return jsonify({"success": False, "error": "Task not found or cannot be deleted"}), 404
+
+@bp.route('/<task_id>', methods=['PUT'])
+def update_task(task_id):
+    """更新任务参数"""
+    data = request.json
+    params = data.get('params', {})
+    
+    success = task_manager.update_task(task_id, params)
+    if success:
+        return jsonify({"success": True, "message": "Task updated"})
+    return jsonify({"success": False, "error": "Task not found or cannot be updated (must be PENDING)"}), 400
+
+@bp.route('/config', methods=['GET'])
+def get_config():
+    """获取任务调度配置"""
+    return jsonify({
+        "max_workers": task_manager.max_workers,
+        "running_tasks": len(task_manager.running_tasks)
+    })
+
+@bp.route('/config', methods=['PUT'])
+def update_config():
+    """更新任务调度配置"""
+    data = request.json
+    new_limit = data.get('max_workers')
+    
+    if new_limit is None or not isinstance(new_limit, int) or new_limit < 1:
+        return jsonify({"error": "Invalid max_workers value"}), 400
+    
+    task_manager.update_max_workers(new_limit)
+    return jsonify({
+        "success": True,
+        "max_workers": task_manager.max_workers
     })

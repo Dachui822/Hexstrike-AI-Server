@@ -4,15 +4,32 @@ import time
 import os
 from app.extensions import redis_client, db
 from app.models.task import TaskLog, Task
+from app.models.tool import Tool
 
 logger = logging.getLogger(__name__)
 
 class ToolExecutor:
     def run(self, task_id: str, tool_name: str, target: str, params: dict) -> dict:
         """执行工具命令"""
-        cmd = f"{tool_name} {target}" 
-        if params:
-            param_str = " ".join([f"--{k}={v}" for k, v in params.items()])
+        
+        # 1. 匹配 MCP 服务端工具状态 (前置校验)
+        tool = db.session.get(Tool, tool_name)
+        if not tool:
+            return {"success": False, "error": f"Tool '{tool_name}' not registered in database."}
+        
+        if not tool.is_available:
+            logger.warning(f"⚠️ Tool '{tool_name}' is marked as unavailable. Attempting execution anyway...")
+            # 注意：这里选择“警告但继续执行”，因为有时数据库状态更新滞后，
+            # 如果不想执行，可改为 return {"success": False, "error": "Tool unavailable"}
+
+        # 2. 过滤无效参数
+        meta_params = {'target', 'url', 'async', 'priority', 'timeout'}
+        valid_params = {k: v for k, v in params.items() if k not in meta_params}
+        
+        # 3. 构建命令
+        cmd = f"{tool_name} {target}"
+        if valid_params:
+            param_str = " ".join([f"--{k}={v}" for k, v in valid_params.items()])
             cmd += f" {param_str}"
             
         logger.info(f"Executing: {cmd} [Task: {task_id}]")

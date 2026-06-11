@@ -11,18 +11,13 @@ bp = Blueprint('tools', __name__)
 
 @bp.route('/', methods=['GET'])
 def list_tools():
-    category = request.args.get('category')
-    query = Tool.query
-    if category:
-        query = query.filter(Tool.category == category)
-    tools = query.all()
-    return jsonify([{
-        "name": t.name, "display_name": t.display_name,
-        "category": t.category, "available": t.is_available,
-        "version": t.installed_version,
-        "last_check": t.last_health_check.isoformat() if t.last_health_check else None,
-        "health_check_cmd": t.health_check_cmd
-    } for t in tools])
+    """获取工具列表 (从内存缓存读取，支持动态更新)"""
+    try:
+        tools = ToolRegistry.get_live_tools_status()
+        return jsonify(tools)
+    except Exception as e:
+        logger.error(f"Failed to get tools status: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @bp.route('/<tool_name>/health', methods=['POST'])
 def trigger_health_check(tool_name):

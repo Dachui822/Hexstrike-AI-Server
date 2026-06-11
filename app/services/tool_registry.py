@@ -166,6 +166,10 @@ class ToolRegistry:
     _auto_check_running = False
     _last_check_time = None
     _check_stats = {"total": 0, "available": 0, "unavailable": 0, "errors": 0}
+    
+    # 内存状态缓存 (用于前端动态读取，不依赖 DB)
+    _live_status_cache = {}
+    _cache_lock = threading.Lock()
 
     @staticmethod
     def init_tools():
@@ -204,7 +208,7 @@ class ToolRegistry:
         """执行工具健康检查"""
         tool = db.session.get(Tool, tool_name)
         if not tool:
-            return {"available": False, "error": "Tool not registered"}
+            return {"name": tool_name, "available": False, "error": "Tool not registered"}
 
         try:
             for pkg_type, pkgs in (tool.dependencies or {}).items():
@@ -221,7 +225,7 @@ class ToolRegistry:
             if result.returncode == 0:
                 version_line = result.stdout.split('\n')[0] if result.stdout else "Unknown"
                 tool.is_available = True
-                tool.installed_version = version_line[:50]
+                tool.installed_version = version_line[:255]
             else:
                 tool.is_available = False
                 tool.installed_version = None
@@ -231,14 +235,18 @@ class ToolRegistry:
             tool.installed_version = None
             logger.warning(f"Health check failed for {tool_name}: {e}")
 
-        tool.last_health_check = db.func.now()
+        tool.last_health_check = datetime.now()
         db.session.commit()
 
+        # 返回完整信息供缓存使用
         return {
             "name": tool.name,
+            "display_name": tool.display_name,
+            "category": tool.category,
             "available": tool.is_available,
             "version": tool.installed_version,
-            "last_check": tool.last_health_check.isoformat() if tool.last_health_check else None
+            "last_check": tool.last_health_check.isoformat(),
+            "health_check_cmd": tool.health_check_cmd
         }
 
     @staticmethod
@@ -263,12 +271,25 @@ class ToolRegistry:
 
         ToolRegistry._check_stats = stats
         ToolRegistry._last_check_time = datetime.now()
+        
+        # 更新内存缓存
+        with ToolRegistry._cache_lock:
+            ToolRegistry._live_status_cache = {r['name']: r for r in results}
 
         return {
             "timestamp": datetime.now().isoformat(),
             "stats": stats,
             "results": results
         }
+
+    @staticmethod
+    def get_live_tools_status() -> list:
+        """获取内存中的最新工具状态 (不读库)"""
+        with ToolRegistry._cache_lock:
+            if not ToolRegistry._live_status_cache:
+                # 如果缓存为空，执行一次同步检测
+                ToolRegistry.check_all_health()
+            return list(ToolRegistry._live_status_cache.values())
 
     @staticmethod
     def _auto_health_check_loop():

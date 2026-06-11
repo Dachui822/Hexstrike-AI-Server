@@ -71,7 +71,7 @@ def get_task_logs():
         "task_id": t.id,
         "tool": t.tool_name,
         "target": t.target,
-        "status": t.status.value if t.status else "unknown",
+        "status": t.status.value.lower() if t.status else "unknown",
         "output": _read_task_output(t),
         "created_at": t.created_at.isoformat() if t.created_at else None,
         "duration": (t.completed_at - t.started_at).total_seconds() if t.completed_at and t.started_at else None
