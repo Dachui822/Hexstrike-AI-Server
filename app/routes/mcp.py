@@ -2,9 +2,10 @@ from flask import Blueprint, request, jsonify
 from app.services.task_manager import task_manager
 from app.services.tool_registry import ToolRegistry
 from app.extensions import db
-from app.models.task import Task
+from app.models.task import Task, TaskLog
 import uuid
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 bp = Blueprint('mcp', __name__)
@@ -77,15 +78,56 @@ def mcp_handler():
                 if not task:
                     return jsonify({"jsonrpc": "2.0", "id": req_id, "error": {"code": -32602, "message": "Task not found"}})
                 
+                # 查询任务日志 (按时间正序)
+                logs = TaskLog.query.filter_by(task_id=task_id).order_by(TaskLog.timestamp.asc()).all()
+                log_messages = [
+                    {
+                        "level": log.level.value if log.level else "INFO",
+                        "source": log.source.value if log.source else "system",
+                        "message": log.message,
+                        "timestamp": log.timestamp.isoformat() if log.timestamp else None
+                    }
+                    for log in logs
+                ]
+                
+                # 读取输出文件内容 (如果任务完成且有输出)
+                output_content = None
+                if task.status and task.status.value in ('SUCCESS', 'FAILED') and task.output_path:
+                    try:
+                        if os.path.exists(task.output_path):
+                            with open(task.output_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                output_content = f.read()
+                    except Exception as e:
+                        logger.warning(f"Failed to read output file {task.output_path}: {e}")
+                        output_content = f"[Error reading output file: {str(e)}]"
+                
+                # 构建返回结果
+                result = {
+                    "task_id": task.id,
+                    "tool": task.tool_name,
+                    "target": task.target,
+                    "status": task.status.value if task.status else "unknown",
+                    "progress": task.progress,
+                    "created_at": task.created_at.isoformat() if task.created_at else None,
+                    "completed_at": task.completed_at.isoformat() if task.completed_at else None,
+                }
+
+                if task.status and task.status.value == 'SUCCESS':
+                    # 任务成功：返回工具扫描的结果内容 (output)
+                    result["result"] = output_content if output_content else "[No output generated]"
+                    result["message"] = "Task completed successfully. Here is the scan result:"
+                elif task.status and task.status.value == 'FAILED':
+                    # 任务失败：返回工具执行日志以便排查 (logs)
+                    result["logs"] = log_messages
+                    result["error"] = task.error_message
+                    result["message"] = f"Task failed. Here are the execution logs for debugging: {task.error_message or ''}"
+                else:
+                    # 任务运行中
+                    result["message"] = f"Task is {task.status.value if task.status else 'unknown'}. Progress: {task.progress}%"
+
                 return jsonify({
                     "jsonrpc": "2.0", "id": req_id,
-                    "result": {
-                        "task_id": task.id,
-                        "status": task.status.value if task.status else "unknown",
-                        "progress": task.progress,
-                        "error": task.error_message,
-                        "output_path": task.output_path
-                    }
+                    "result": result
                 })
             else:
                 # 提交安全扫描任务

@@ -35,6 +35,7 @@ class ToolExecutor:
 
             logger.info(f"Executing: {cmd} [Task: {task_id}] [Params: {valid_params}]")
 
+            output_path = f"/tmp/{task_id}.log"
             try:
                 process = subprocess.Popen(
                     cmd,
@@ -44,24 +45,30 @@ class ToolExecutor:
                     text=True
                 )
 
-                while True:
-                    output = process.stdout.readline()
-                    if output == '' and process.poll() is not None:
-                        break
-                    if output:
-                        self._push_log(task_id, output.strip(), 'stdout')
-                        self._update_progress(task_id, process)
+                # 打开输出文件，保存扫描结果
+                with open(output_path, 'w', encoding='utf-8') as out_file:
+                    while True:
+                        output = process.stdout.readline()
+                        if output == '' and process.poll() is not None:
+                            break
+                        if output:
+                            out_file.write(output)
+                            out_file.flush()
+                            self._push_log(task_id, output.strip(), 'stdout')
+                            self._update_progress(task_id, process)
 
-                stderr_output = process.stderr.read()
-                if stderr_output:
-                    self._push_log(task_id, stderr_output, 'stderr')
+                    # 读取 stderr
+                    stderr_output = process.stderr.read()
+                    if stderr_output:
+                        out_file.write(f"\n--- STDERR ---\n{stderr_output}\n")
+                        self._push_log(task_id, stderr_output, 'stderr')
 
                 exit_code = process.poll()
 
                 if exit_code == 0:
-                    return {"success": True, "output_path": f"/tmp/{task_id}.log"}
+                    return {"success": True, "output_path": output_path}
                 else:
-                    return {"success": False, "error": f"Exit code {exit_code}"}
+                    return {"success": False, "error": f"Exit code {exit_code}", "output_path": output_path}
 
             except Exception as e:
                 self._push_log(task_id, f"Execution error: {str(e)}", 'stderr')
