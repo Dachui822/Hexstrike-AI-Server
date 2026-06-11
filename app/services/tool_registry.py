@@ -251,7 +251,7 @@ class ToolRegistry:
 
     @staticmethod
     def check_all_health() -> dict:
-        """批量检查所有工具健康状态"""
+        """批量检查所有工具健康状态 (仅更新状态字段，不影响持久化数据)"""
         tools = Tool.query.all()
         results = []
         stats = {"total": len(tools), "available": 0, "unavailable": 0, "errors": 0}
@@ -266,13 +266,22 @@ class ToolRegistry:
                     stats["unavailable"] += 1
             except Exception as e:
                 logger.error(f"Error checking {tool.name}: {e}")
-                results.append({"name": tool.name, "available": False, "error": str(e)})
+                results.append({
+                    "name": tool.name, 
+                    "display_name": tool.display_name, 
+                    "category": tool.category,
+                    "available": False, 
+                    "version": tool.installed_version,
+                    "last_check": tool.last_health_check.isoformat() if tool.last_health_check else None,
+                    "health_check_cmd": tool.health_check_cmd,
+                    "error": str(e)
+                })
                 stats["errors"] += 1
 
         ToolRegistry._check_stats = stats
         ToolRegistry._last_check_time = datetime.now()
-        
-        # 更新内存缓存
+
+        # 更新内存缓存 (仅更新状态相关信息)
         with ToolRegistry._cache_lock:
             ToolRegistry._live_status_cache = {r['name']: r for r in results}
 
@@ -284,11 +293,35 @@ class ToolRegistry:
 
     @staticmethod
     def get_live_tools_status() -> list:
-        """获取内存中的最新工具状态 (不读库)"""
+        """获取工具状态 (从数据库读取持久化数据，状态字段使用缓存)"""
+        # 此方法已废弃，改用 list_tools() API 直接从数据库读取
+        # 保留此方法仅为向后兼容
         with ToolRegistry._cache_lock:
             if not ToolRegistry._live_status_cache:
-                # 如果缓存为空，执行一次同步检测
-                ToolRegistry.check_all_health()
+                # 如果缓存为空，从数据库读取基础信息
+                try:
+                    tools = Tool.query.all()
+                    if tools:
+                        result = []
+                        for tool in tools:
+                            result.append({
+                                "name": tool.name,
+                                "display_name": tool.display_name,
+                                "category": tool.category,
+                                "available": tool.is_available,
+                                "version": tool.installed_version,
+                                "last_check": tool.last_health_check.isoformat() if tool.last_health_check else None,
+                                "health_check_cmd": tool.health_check_cmd
+                            })
+                        ToolRegistry._live_status_cache = {r['name']: r for r in result}
+                        return result
+                    else:
+                        logger.warning("⚠️ No tools found in database, initializing...")
+                        ToolRegistry.init_tools()
+                        return []
+                except Exception as e:
+                    logger.error(f"❌ Failed to load tools from database: {e}")
+                    return []
             return list(ToolRegistry._live_status_cache.values())
 
     @staticmethod

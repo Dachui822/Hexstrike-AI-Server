@@ -11,12 +11,42 @@ bp = Blueprint('tools', __name__)
 
 @bp.route('/', methods=['GET'])
 def list_tools():
-    """获取工具列表 (从内存缓存读取，支持动态更新)"""
+    """获取工具列表 (从数据库读取持久化数据，状态字段使用缓存)"""
     try:
-        tools = ToolRegistry.get_live_tools_status()
-        return jsonify(tools)
+        # 从数据库读取所有工具的持久化数据
+        tools = Tool.query.all()
+        if not tools:
+            logger.warning("⚠️ No tools found in database, initializing...")
+            ToolRegistry.init_tools()
+            tools = Tool.query.all()
+            if not tools:
+                return jsonify([])
+        
+        # 获取内存中的健康状态缓存
+        health_cache = ToolRegistry._live_status_cache
+        
+        result = []
+        for tool in tools:
+            # 优先使用缓存的健康状态，否则使用数据库中的状态
+            cached = health_cache.get(tool.name, {})
+            result.append({
+                "name": tool.name,
+                "display_name": tool.display_name,
+                "category": tool.category,
+                "description": tool.description,
+                "available": cached.get("available", tool.is_available),  # 状态优先用缓存
+                "version": cached.get("version", tool.installed_version),  # 版本优先用缓存
+                "last_check": cached.get("last_check", tool.last_health_check.isoformat() if tool.last_health_check else None),
+                "health_check_cmd": tool.health_check_cmd,
+                "dependencies": tool.dependencies,
+                "command_template": tool.command_template
+            })
+        
+        return jsonify(result)
     except Exception as e:
         logger.error(f"Failed to get tools status: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
 @bp.route('/<tool_name>/health', methods=['POST'])
