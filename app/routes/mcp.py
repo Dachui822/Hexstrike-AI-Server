@@ -80,19 +80,26 @@ def mcp_handler():
                 
                 # 查询任务日志 (按时间正序)
                 logs = TaskLog.query.filter_by(task_id=task_id).order_by(TaskLog.timestamp.asc()).all()
+                
+                # 安全获取枚举值 (兼容字符串)
+                def get_enum_val(v, default):
+                    return v.value if hasattr(v, 'value') else str(v) if v else default
+
                 log_messages = [
                     {
-                        "level": log.level.value if log.level else "INFO",
-                        "source": log.source.value if log.source else "system",
+                        "level": get_enum_val(log.level, "INFO"),
+                        "source": get_enum_val(log.source, "system"),
                         "message": log.message,
                         "timestamp": log.timestamp.isoformat() if log.timestamp else None
                     }
                     for log in logs
                 ]
-                
+
                 # 读取输出文件内容 (如果任务完成且有输出)
                 output_content = None
-                if task.status and task.status.value in ('SUCCESS', 'FAILED') and task.output_path:
+                status_val = get_enum_val(task.status, 'unknown')
+                
+                if status_val in ('SUCCESS', 'FAILED') and task.output_path:
                     try:
                         if os.path.exists(task.output_path):
                             with open(task.output_path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -100,11 +107,8 @@ def mcp_handler():
                     except Exception as e:
                         logger.warning(f"Failed to read output file {task.output_path}: {e}")
                         output_content = f"[Error reading output file: {str(e)}]"
-                
-                # 构建返回结果
-                # 获取状态值 (兼容 SQLAlchemy 返回字符串或枚举)
-                status_val = task.status.value if hasattr(task.status, 'value') else str(task.status) if task.status else 'unknown'
 
+                # 构建返回结果
                 result = {
                     "task_id": task.id,
                     "tool": task.tool_name,
