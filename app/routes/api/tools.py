@@ -1,8 +1,12 @@
 from flask import Blueprint, request, jsonify
 from app.extensions import db
 from app.models.tool import Tool
+from app.models.task import Task, TaskStatus
 from app.services.tool_registry import ToolRegistry
+from app.services.task_manager import task_manager
+import logging
 
+logger = logging.getLogger(__name__)
 bp = Blueprint('tools', __name__)
 
 @bp.route('/', methods=['GET'])
@@ -41,6 +45,32 @@ def update_tool(tool_name):
         "success": True,
         "health_check_cmd": tool.health_check_cmd
     })
+
+@bp.route('/<tool_name>', methods=['POST'])
+def execute_tool(tool_name):
+    """执行工具扫描 (通过任务池)"""
+    data = request.get_json() or {}
+    target = data.get('target') or data.get('url')
+    if not target:
+        return jsonify({"error": "target or url is required"}), 400
+
+    # 使用任务管理器提交任务
+    try:
+        task_id = task_manager.submit_task(
+            tool_name=tool_name,
+            target=target,
+            params=data,
+            priority=data.get('priority', 0)
+        )
+        return jsonify({
+            "task_id": task_id,
+            "status": "queued",
+            "tool": tool_name,
+            "target": target
+        }), 202
+    except Exception as e:
+        logger.error(f"Failed to submit task: {e}")
+        return jsonify({"error": str(e)}), 500
 
 @bp.route('/health/check-all', methods=['POST'])
 def check_all_tools():

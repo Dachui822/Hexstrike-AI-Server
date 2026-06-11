@@ -20,6 +20,7 @@ def create_task():
     return jsonify({"task_id": task_id, "status": "PENDING"}), 202
 
 @bp.route('/', methods=['GET'])
+@bp.route('', methods=['GET'])
 def list_tasks():
     status_filter = request.args.get('status')
     page = request.args.get('page', 1, type=int)

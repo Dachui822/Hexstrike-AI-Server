@@ -10,6 +10,18 @@ bp = Blueprint('logs', __name__)
 
 LOG_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'hexstrike.log')
 
+def _read_task_output(task):
+    """读取任务输出内容"""
+    if task.output_path and os.path.exists(task.output_path):
+        try:
+            with open(task.output_path, 'r', encoding='utf-8', errors='ignore') as f:
+                return f.read()[:2000]  # 限制长度
+        except Exception:
+            return "Failed to read output file."
+    elif task.error_message:
+        return task.error_message
+    return "No output available."
+
 @bp.route('/system', methods=['GET'])
 def get_system_logs():
     """获取系统日志 (读取 hexstrike.log 文件)"""
@@ -48,7 +60,7 @@ def get_task_logs():
     query = Task.query.order_by(Task.created_at.desc())
 
     if tool_name:
-        query = query.filter(Task.tool == tool_name)
+        query = query.filter(Task.tool_name == tool_name)
     if status:
         query = query.filter(Task.status == status)
 
@@ -56,13 +68,13 @@ def get_task_logs():
     
     tasks = [{
         "id": t.id,
-        "task_id": t.task_id,
-        "tool": t.tool,
+        "task_id": t.id,
+        "tool": t.tool_name,
         "target": t.target,
-        "status": t.status,
-        "output": t.output[:500] if t.output else "",  # 只显示前500字符
+        "status": t.status.value if t.status else "unknown",
+        "output": _read_task_output(t),
         "created_at": t.created_at.isoformat() if t.created_at else None,
-        "duration": t.duration
+        "duration": (t.completed_at - t.started_at).total_seconds() if t.completed_at and t.started_at else None
     } for t in pagination.items]
 
     return jsonify({
