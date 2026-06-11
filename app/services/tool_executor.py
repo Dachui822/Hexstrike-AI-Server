@@ -24,13 +24,20 @@ class ToolExecutor:
                 logger.warning(f"⚠️ Tool '{tool_name}' is marked as unavailable. Attempting execution anyway...")
 
             # 2. 过滤无效参数，保留执行参数
-            meta_params = {'async', 'priority', 'timeout'}
+            meta_params = {'async', 'priority', 'timeout', 'use_recovery'}
             valid_params = {k: v for k, v in params.items() if k not in meta_params}
 
-            # 3. 构建命令
+            # 3. 构建命令 (安全拼接，兼容短参数如 -e, -t, -sV)
             cmd = f"{tool_name} {target}"
+            
+            # 优先处理 additional_args (直接追加，不加 -- 前缀)
+            additional_args = valid_params.pop('additional_args', '')
+            if additional_args:
+                cmd += f" {additional_args}"
+            
+            # 处理其他参数 (保持键值对原样拼接，不强制加 --，避免破坏工具原生语法)
             if valid_params:
-                param_str = " ".join([f"--{k}={v}" for k, v in valid_params.items()])
+                param_str = " ".join([f"{k} {v}" for k, v in valid_params.items()])
                 cmd += f" {param_str}"
 
             logger.info(f"Executing: {cmd} [Task: {task_id}] [Params: {valid_params}]")
