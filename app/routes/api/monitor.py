@@ -2,8 +2,19 @@ from flask import Blueprint, jsonify, Response, stream_with_context
 from app.services.monitor_service import MonitorService
 import app.extensions as extensions
 import json
+from datetime import datetime
 
 bp = Blueprint('monitor', __name__)
+
+@bp.route('/health', methods=['GET'])
+def health_check():
+    """MCP客户端健康检查端点"""
+    return jsonify({
+        "status": "healthy",
+        "service": "HexStrike AI Backend",
+        "timestamp": datetime.now().isoformat(),
+        "redis_connected": extensions.redis_client is not None
+    })
 
 @bp.route('/stats', methods=['GET'])
 def get_stats():

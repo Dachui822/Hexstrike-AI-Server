@@ -1,4 +1,4 @@
-from flask import Flask
+from flask import Flask, jsonify
 from app.config import get_config
 from app.extensions import init_extensions
 from app.routes import register_blueprints
@@ -24,5 +24,18 @@ def create_app():
     # 启动自动健康检测
     with app.app_context():
         ToolRegistry.start_auto_health_check()
+
+    # 注册根路径路由 (MCP客户端连接测试等)
+    @app.route('/health', methods=['GET'])
+    def health_check():
+        """MCP客户端健康检查端点"""
+        from datetime import datetime
+        import app.extensions as extensions
+        return jsonify({
+            "status": "healthy",
+            "service": "HexStrike AI Backend",
+            "timestamp": datetime.now().isoformat(),
+            "redis_connected": extensions.redis_client is not None
+        })
 
     return app
