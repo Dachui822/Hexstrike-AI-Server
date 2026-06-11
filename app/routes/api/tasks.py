@@ -63,10 +63,13 @@ def get_task(task_id):
 @bp.route('/<task_id>', methods=['DELETE'])
 def delete_task(task_id):
     """删除任务"""
-    success = task_manager.delete_task(task_id)
-    if success:
-        return jsonify({"success": True, "message": "Task deleted or cancelled"})
-    return jsonify({"success": False, "error": "Task not found or cannot be deleted"}), 404
+    try:
+        success = task_manager.delete_task(task_id)
+        if success:
+            return jsonify({"success": True, "message": "Task deleted or cancelled"})
+        return jsonify({"success": False, "error": "Task not found or cannot be deleted"}), 404
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
 
 @bp.route('/<task_id>', methods=['PUT'])
 def update_task(task_id):

@@ -136,7 +136,7 @@ class TaskManager:
         """删除任务"""
         from app import create_app
         app = create_app()
-        
+
         with app.app_context():
             task = db.session.get(Task, task_id)
             if not task:
@@ -152,10 +152,12 @@ class TaskManager:
                 task.completed_at = db.func.now()
                 logger.info(f"Task {task_id} marked as cancelled.")
             else:
+                # 先删除关联的日志
+                TaskLog.query.filter_by(task_id=task_id).delete()
                 # 物理删除非运行中任务
                 db.session.delete(task)
                 logger.info(f"Task {task_id} deleted.")
-            
+
             db.session.commit()
             return True
 
