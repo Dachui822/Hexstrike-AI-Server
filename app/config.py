@@ -38,7 +38,7 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
     # Task Pool
-    MAX_WORKERS = int(os.environ.get("MAX_WORKERS", 10))
+    MAX_WORKERS = int(os.environ.get("MAX_WORKERS", 3))
     TASK_TIMEOUT = int(os.environ.get("TASK_TIMEOUT", 3600))
 
     # Tool Health Check

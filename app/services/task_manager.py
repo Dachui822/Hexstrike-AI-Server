@@ -1,6 +1,7 @@
 import json
 import uuid
 import time
+import os
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from app.extensions import db
@@ -10,8 +11,11 @@ from app.services.tool_executor import ToolExecutor
 
 logger = logging.getLogger(__name__)
 
+# 从环境变量读取默认并发数，与 config.py 保持一致
+_DEFAULT_MAX_WORKERS = int(os.environ.get("MAX_WORKERS", 3))
+
 class TaskManager:
-    def __init__(self, max_workers=10):
+    def __init__(self, max_workers=_DEFAULT_MAX_WORKERS):
         self.max_workers = max_workers  # 动态并发限制
         # 线程池保持足够大，实际并发由 max_workers 控制
         self.executor = ThreadPoolExecutor(max_workers=50) 

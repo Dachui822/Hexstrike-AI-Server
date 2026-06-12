@@ -1,5 +1,5 @@
 from app.extensions import db
-from sqlalchemy import Column, String, Float, Integer, DateTime, Text, Enum as SQLEnum
+from sqlalchemy import Column, String, Float, Integer, DateTime, Text, Enum as SQLEnum, LongText
 from sqlalchemy.sql import func
 import enum
 
@@ -35,10 +35,10 @@ class Task(db.Model):
 
 class TaskLog(db.Model):
     __tablename__ = 'task_logs'
-    
+
     id = db.Column(db.BigInteger, primary_key=True, autoincrement=True)
     task_id = db.Column(String(36), db.ForeignKey('tasks.id'), nullable=False, index=True)
     level = db.Column(SQLEnum('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'), default='INFO')
-    message = db.Column(Text, nullable=False)
+    message = db.Column(LongText, nullable=False)
     source = db.Column(SQLEnum('stdout', 'stderr', 'system', 'progress'), default='system')
     timestamp = db.Column(DateTime, server_default=func.now())
