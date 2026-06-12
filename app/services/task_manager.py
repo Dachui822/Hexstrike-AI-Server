@@ -18,7 +18,7 @@ class TaskManager:
     def __init__(self, max_workers=_DEFAULT_MAX_WORKERS):
         self.max_workers = max_workers  # 动态并发限制
         # 线程池保持足够大，实际并发由 max_workers 控制
-        self.executor = ThreadPoolExecutor(max_workers=50) 
+        self.executor = ThreadPoolExecutor(max_workers=100) 
         self.running_tasks = {}  # task_id -> Future object
         self.executor_instance = ToolExecutor()
 
@@ -34,7 +34,15 @@ class TaskManager:
     def submit_task(self, tool_name: str, target: str, params: dict, priority: int = 0, mcp_request_id: str = None) -> str:
         """提交任务到任务池"""
         task_id = str(uuid.uuid4())
-        
+
+        # 优化 3 & 4: 检查队列长度 (快速失败 & 监控)
+        if extensions.redis_client:
+            queue_length = extensions.redis_client.zcard("task:queue")
+            if queue_length >= 1000:
+                raise Exception("Task queue is full (1000 tasks), please try again later")
+            elif queue_length >= 50:
+                logger.warning(f"⚠️ Task queue length is high: {queue_length}, consider increasing MAX_WORKERS")
+
         # 调试日志
         logger.info(f"[DEBUG] submit_task: tool_name={tool_name}, target={repr(target)}, params={params}")
 
@@ -144,6 +152,8 @@ class TaskManager:
 
             if extensions.redis_client:
                 extensions.redis_client.delete(f"task:{task_id}:lock")
+                extensions.redis_client.delete(f"task:{task_id}")          # 清理状态 Hash
+                extensions.redis_client.delete(f"task:{task_id}:logs")     # 清理日志 List
             self.running_tasks.pop(task_id, None)
             self._dispatch()
 

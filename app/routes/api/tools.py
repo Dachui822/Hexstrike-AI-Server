@@ -54,6 +54,81 @@ def trigger_health_check(tool_name):
     result = ToolRegistry.check_health(tool_name)
     return jsonify(result)
 
+@bp.route('/', methods=['POST'])
+def create_tool():
+    """创建新工具"""
+    data = request.get_json()
+    
+    # 验证必填字段
+    required_fields = ['name', 'display_name', 'category']
+    for field in required_fields:
+        if not data.get(field):
+            return jsonify({"error": f"Missing required field: {field}"}), 400
+    
+    # 检查工具是否已存在
+    if db.session.get(Tool, data['name']):
+        return jsonify({"error": f"Tool '{data['name']}' already exists"}), 409
+    
+    # 创建新工具
+    tool = Tool(
+        name=data['name'],
+        display_name=data['display_name'],
+        category=data['category'],
+        description=data.get('description', ''),
+        command_template=data.get('command_template'),
+        dependencies=data.get('dependencies', {}),
+        health_check_cmd=data.get('health_check_cmd', f"{data['name']} --version"),
+        is_available=False
+    )
+    
+    db.session.add(tool)
+    db.session.commit()
+    
+    logger.info(f"✅ New tool created: {tool.name}")
+    
+    return jsonify({
+        "success": True,
+        "tool": {
+            "name": tool.name,
+            "display_name": tool.display_name,
+            "category": tool.category,
+            "description": tool.description,
+            "health_check_cmd": tool.health_check_cmd,
+            "dependencies": tool.dependencies
+        }
+    }), 201
+
+@bp.route('/<tool_name>', methods=['DELETE'])
+def delete_tool(tool_name):
+    """删除工具"""
+    tool = db.session.get(Tool, tool_name)
+    if not tool:
+        return jsonify({"error": "Tool not found"}), 404
+    
+    # 检查是否有运行中的任务
+    running_tasks = Task.query.filter_by(tool_name=tool_name, status=TaskStatus.RUNNING).count()
+    if running_tasks > 0:
+        return jsonify({"error": f"Cannot delete tool with {running_tasks} running task(s)"}), 400
+    
+    # 删除关联的任务日志
+    from app.models.task import TaskLog
+    TaskLog.query.filter_by(task_id=db.session.query(Task.id).filter_by(tool_name=tool_name).subquery()).delete(synchronize_session=False)
+    
+    # 删除工具
+    db.session.delete(tool)
+    db.session.commit()
+    
+    # 清理内存缓存
+    if tool_name in ToolRegistry._live_status_cache:
+        del ToolRegistry._live_status_cache[tool_name]
+    
+    logger.info(f"🗑️ Tool deleted: {tool_name}")
+    
+    return jsonify({
+        "success": True,
+        "message": f"Tool '{tool_name}' deleted successfully"
+    })
+
 @bp.route('/<tool_name>', methods=['PUT'])
 def update_tool(tool_name):
     """更新工具配置（支持修改健康检测命令）"""

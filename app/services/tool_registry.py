@@ -127,7 +127,7 @@ DEFAULT_TOOLS = [
     {"name": "have-i-been-pwned", "display_name": "Have I Been Pwned", "category": "osint", "description": "Breach checking tool.", "dependencies": {"apt": ["hibp"]}, "health_check_cmd": "hibp --help"},
 
     # === Exploitation Tools ===
-    {"name": "msfconsole", "display_name": "Metasploit", "category": "exploitation", "description": "Exploitation framework.", "dependencies": {"apt": ["metasploit-framework"]}, "health_check_cmd": "msfconsole --version"},
+    {"name": "msfconsole", "display_name": "Metasploit", "category": "exploitation", "description": "Exploitation framework.", "dependencies": {"apt": ["msfconsole"]}, "health_check_cmd": "msfconsole --version"},
     {"name": "exploit-db", "display_name": "Exploit DB", "category": "exploitation", "description": "Exploit database.", "dependencies": {"apt": ["exploitdb"]}, "health_check_cmd": "searchsploit --version"},
     {"name": "searchsploit", "display_name": "Searchsploit", "category": "exploitation", "description": "Exploit DB search tool.", "dependencies": {"apt": ["exploitdb"]}, "health_check_cmd": "searchsploit --help"},
 
@@ -155,7 +155,7 @@ DEFAULT_TOOLS = [
     {"name": "airodump-ng", "display_name": "Airodump-ng", "category": "additional", "description": "Wireless packet capture.", "dependencies": {"apt": ["aircrack-ng"]}, "health_check_cmd": "airodump-ng --help"},
     {"name": "aireplay-ng", "display_name": "Aireplay-ng", "category": "additional", "description": "Wireless packet injection.", "dependencies": {"apt": ["aircrack-ng"]}, "health_check_cmd": "aireplay-ng --help"},
     {"name": "aircrack-ng", "display_name": "Aircrack-ng", "category": "additional", "description": "WiFi security audit.", "dependencies": {"apt": ["aircrack-ng"]}, "health_check_cmd": "aircrack-ng --help"},
-    {"name": "msfvenom", "display_name": "MSFVenom", "category": "additional", "description": "Payload generator.", "dependencies": {"apt": ["metasploit-framework"]}, "health_check_cmd": "msfvenom --help"},
+    {"name": "msfvenom", "display_name": "MSFVenom", "category": "additional", "description": "Payload generator.", "dependencies": {"apt": ["msfvenom"]}, "health_check_cmd": "msfvenom --help"},
     {"name": "pwntools", "display_name": "Pwntools", "category": "additional", "description": "CTF framework.", "dependencies": {"apt": ["pwntools"]}, "health_check_cmd": "python3 -c 'import pwn; print(pwn.__version__)'"},
     {"name": "jwt-analyzer", "display_name": "JWT Analyzer", "category": "additional", "description": "JWT token analyzer.", "dependencies": {"apt": ["jwt"]}, "health_check_cmd": "python3 -c 'import jwt; print(jwt.__version__)'"},
     {"name": "graphql-scanner", "display_name": "GraphQL Scanner", "category": "additional", "description": "GraphQL security scanner.", "dependencies": {"apt": ["graphql-scanner"]}, "health_check_cmd": "graphql-scanner --help"},
