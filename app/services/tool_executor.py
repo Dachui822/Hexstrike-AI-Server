@@ -15,6 +15,9 @@ class ToolExecutor:
         from app import create_app
         app = create_app()
         with app.app_context():
+            # 调试日志：记录接收到的参数
+            logger.info(f"[DEBUG] run() called: task_id={task_id}, tool_name={tool_name}, target={repr(target)}, params={params}")
+            
             # 1. 匹配 MCP 服务端工具状态 (前置校验)
             tool = db.session.get(Tool, tool_name)
             if not tool:
@@ -28,14 +31,57 @@ class ToolExecutor:
             valid_params = {k: v for k, v in params.items() if k not in meta_params}
 
             # 3. 构建命令 (安全拼接，兼容短参数如 -e, -t, -sV)
+            # 针对特定工具的参数格式进行适配 (修复 dirsearch 等工具缺少 -u 参数的问题)
+
+            # 默认命令基础
             cmd = f"{tool_name} {target}"
+
+            # 特殊处理 dirsearch (需要 -u)
+            if tool_name == 'dirsearch':
+                # 确保 target 不为空
+                if not target or target.strip() == '':
+                    return {"success": False, "error": "URL target is missing for dirsearch. Please provide a valid URL."}
+                cmd = f"dirsearch -u {target}"
+                if 'extensions' in valid_params:
+                    cmd += f" -e {valid_params.pop('extensions')}"
+                if 'wordlist' in valid_params:
+                    cmd += f" -w {valid_params.pop('wordlist')}"
+                if 'threads' in valid_params:
+                    cmd += f" -t {valid_params.pop('threads')}"
+                if 'recursive' in valid_params and valid_params.pop('recursive') in [True, 'true', '1']:
+                    cmd += " -r"
             
-            # 优先处理 additional_args (直接追加，不加 -- 前缀)
+            # 特殊处理 gobuster (需要 -u 和 mode)
+            elif tool_name == 'gobuster':
+                mode = valid_params.pop('mode', 'dir')
+                cmd = f"gobuster {mode} -u {target}"
+                if 'wordlist' in valid_params:
+                    cmd += f" -w {valid_params.pop('wordlist')}"
+                if 'threads' in valid_params:
+                    cmd += f" -t {valid_params.pop('threads')}"
+
+            # 特殊处理 nmap (支持 scan_type 和 ports)
+            elif tool_name == 'nmap':
+                cmd = f"nmap {target}"
+                if 'scan_type' in valid_params:
+                    cmd += f" {valid_params.pop('scan_type')}"
+                if 'ports' in valid_params:
+                    cmd += f" -p {valid_params.pop('ports')}"
+
+            # 特殊处理 sqlmap (需要 -u)
+            elif tool_name == 'sqlmap':
+                cmd = f"sqlmap -u {target}"
+                if 'level' in valid_params:
+                    cmd += f" --level={valid_params.pop('level')}"
+                if 'risk' in valid_params:
+                    cmd += f" --risk={valid_params.pop('risk')}"
+
+            # 处理 additional_args (所有工具通用，追加到末尾)
             additional_args = valid_params.pop('additional_args', '')
             if additional_args:
                 cmd += f" {additional_args}"
             
-            # 处理其他参数 (保持键值对原样拼接，不强制加 --，避免破坏工具原生语法)
+            # 处理剩余参数 (通用拼接，不强制加 --)
             if valid_params:
                 param_str = " ".join([f"{k} {v}" for k, v in valid_params.items()])
                 cmd += f" {param_str}"

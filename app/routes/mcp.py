@@ -68,6 +68,8 @@ def mcp_handler():
         tool_name = params.get('name')
         arguments = params.get('arguments', {})
 
+        logger.info(f"[DEBUG] tools/call received: tool_name={tool_name}, arguments={arguments}")
+
         try:
             if tool_name == 'get_task_status':
                 task_id = arguments.get('task_id')
@@ -139,6 +141,7 @@ def mcp_handler():
             else:
                 # 提交安全扫描任务
                 target = arguments.pop('target', 'unknown')
+                logger.info(f"[DEBUG] Extracted target={repr(target)} for tool={tool_name}")
                 task_id = task_manager.submit_task(tool_name, target, arguments, mcp_request_id=req_id)
                 return jsonify({
                     "jsonrpc": "2.0", "id": req_id,

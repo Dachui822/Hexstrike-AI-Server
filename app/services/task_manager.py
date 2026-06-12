@@ -31,6 +31,9 @@ class TaskManager:
         """提交任务到任务池"""
         task_id = str(uuid.uuid4())
         
+        # 调试日志
+        logger.info(f"[DEBUG] submit_task: tool_name={tool_name}, target={repr(target)}, params={params}")
+
         # 1. 写入 MySQL
         task = Task(
             id=task_id,
@@ -77,11 +80,14 @@ class TaskManager:
         """实际执行任务"""
         from app import create_app
         app = create_app()
-        
+
         with app.app_context():
             task = db.session.get(Task, task_id)
             if not task:
                 return
+            
+            # 调试日志
+            logger.info(f"[DEBUG] _execute_task: task_id={task_id}, tool_name={task.tool_name}, target={repr(task.target)}, params={task.params}")
 
             task.status = TaskStatus.RUNNING
             task.started_at = db.func.now()
