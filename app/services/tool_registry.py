@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import logging
 import threading
@@ -220,10 +221,22 @@ class ToolRegistry:
                             raise Exception(f"Missing pip package: {pkg}")
 
             result = subprocess.run(tool.health_check_cmd.split(), capture_output=True, text=True, timeout=Config.HEALTH_CHECK_TIMEOUT)
-            if result.returncode == 0:
-                version_line = result.stdout.split('\n')[0] if result.stdout else "Unknown"
+            
+            output_text = result.stdout + result.stderr
+            
+            # 尝试从输出中提取版本号 (如 v1.2.3, 1.2.3, 2.22)
+            version_match = re.search(r'v?(\d+\.\d+(\.\d+)?)', output_text)
+            
+            # 判断可用性的标准：退出码为 0，或者成功提取到了版本号
+            if result.returncode == 0 or version_match:
                 tool.is_available = True
-                tool.installed_version = version_line[:255]
+                if version_match:
+                    # 优先使用正则匹配到的版本号
+                    tool.installed_version = version_match.group(0)[:255]
+                else:
+                    # 如果没有匹配到版本号，但退出码为 0，取第一行作为版本描述
+                    first_line = next((line.strip() for line in output_text.split('\n') if line.strip()), "Unknown")
+                    tool.installed_version = first_line[:255]
             else:
                 tool.is_available = False
                 tool.installed_version = None

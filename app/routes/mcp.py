@@ -3,6 +3,7 @@ from app.services.task_manager import task_manager
 from app.services.tool_registry import ToolRegistry
 from app.extensions import db
 from app.models.task import Task, TaskLog
+from app.models.tool import Tool
 import uuid
 import logging
 import os
@@ -111,9 +112,13 @@ def mcp_handler():
                         output_content = f"[Error reading output file: {str(e)}]"
 
                 # 构建返回结果
+                tool_record = db.session.get(Tool, task.tool_name)
+                tool_version = tool_record.installed_version if tool_record else None
+
                 result = {
                     "task_id": task.id,
                     "tool": task.tool_name,
+                    "tool_version": tool_version,
                     "target": task.target,
                     "status": status_val,
                     "progress": task.progress,
@@ -142,10 +147,13 @@ def mcp_handler():
                 # 提交安全扫描任务
                 target = arguments.pop('target', 'unknown')
                 logger.info(f"[DEBUG] Extracted target={repr(target)} for tool={tool_name}")
+                tool_record = db.session.get(Tool, tool_name)
+                tool_version = tool_record.installed_version if tool_record else None
+
                 task_id = task_manager.submit_task(tool_name, target, arguments, mcp_request_id=req_id)
                 return jsonify({
                     "jsonrpc": "2.0", "id": req_id,
-                    "result": {"task_id": task_id, "status": "ACCEPTED"}
+                    "result": {"task_id": task_id, "status": "ACCEPTED", "tool": tool_name, "tool_version": tool_version}
                 })
         except Exception as e:
             logger.error(f"Error processing tools/call [{tool_name}]: {e}")
