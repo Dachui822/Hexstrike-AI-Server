@@ -403,6 +403,7 @@ class ToolExecutor:
         if extensions.redis_client:
             extensions.redis_client.lpush(f"task:{task_id}:logs", message)
             extensions.redis_client.publish("hexstrike:logs", f"{task_id}|{message}")
+            logger.debug(f"[DEBUG] Pushed log to Redis for task {task_id}: {message[:100]}")
 
         log_entry = TaskLog(task_id=task_id, message=message, source=source, level='INFO')
         db.session.add(log_entry)
