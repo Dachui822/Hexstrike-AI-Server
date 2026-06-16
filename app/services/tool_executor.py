@@ -15,6 +15,25 @@ class ToolExecutor:
         from app import create_app
         app = create_app()
         with app.app_context():
+            # 兼容处理：MCP 客户端可能传递 url/domain/hash 等参数名而非 target
+            # 如果 target 为空，尝试从 params 中获取
+            if not target and params:
+                for alt_param in ['url', 'domain', 'hash', 'query', 'username', 'file', 'path']:
+                    if alt_param in params:
+                        target = params.pop(alt_param)
+                        logger.info(f"[DEBUG] Mapped {alt_param} to target: {repr(target)}")
+                        break
+            
+            # 如果仍然没有 target，尝试从常见参数中获取
+            if not target:
+                # 某些工具可能直接传递了目标参数但名称不同
+                target_aliases = ['host', 'ip', 'input', 'filepath']
+                for alias in target_aliases:
+                    if alias in params:
+                        target = params.pop(alias)
+                        logger.info(f"[DEBUG] Mapped {alias} to target: {repr(target)}")
+                        break
+            
             # 调试日志：记录接收到的参数
             logger.info(f"[DEBUG] run() called: task_id={task_id}, tool_name={tool_name}, target={repr(target)}, params={params}")
             
@@ -248,6 +267,56 @@ class ToolExecutor:
                     cmd += f" -u {valid_params.pop('username')}"
                 if 'password' in valid_params:
                     cmd += f" -p {valid_params.pop('password')}"
+
+            # 特殊处理 shodan (需要 query)
+            elif tool_name in ['shodan', 'shodan_search']:
+                cmd = f"shodan host {target}"
+                if 'limit' in valid_params:
+                    cmd += f" --limit {valid_params.pop('limit')}"
+
+            # 特殊处理 wfuzz (需要 -u 和 -w)
+            elif tool_name == 'wfuzz':
+                cmd = f"wfuzz -u {target}"
+                if 'wordlist' in valid_params:
+                    cmd += f" -w {valid_params.pop('wordlist')}"
+                if 'hc' in valid_params:
+                    cmd += f" --hc {valid_params.pop('hc')}"
+
+            # 特殊处理 jaeles (需要 -t 和 -l)
+            elif tool_name == 'jaeles':
+                cmd = f"jaeles scan -t {target}"
+                if 'templates' in valid_params:
+                    cmd += f" -l {valid_params.pop('templates')}"
+
+            # 特殊处理 dalfox (需要 -u)
+            elif tool_name == 'dalfox':
+                cmd = f"dalfox url {target}"
+                if 'blind' in valid_params:
+                    cmd += f" --blind {valid_params.pop('blind')}"
+
+            # 特殊处理 arjun (需要 -u)
+            elif tool_name == 'arjun':
+                cmd = f"arjun -u {target}"
+                if 'stable' in valid_params and valid_params.pop('stable') in [True, 'true', '1']:
+                    cmd += " --stable"
+
+            # 特殊处理 medusa (需要 -H 和 -M)
+            elif tool_name == 'medusa':
+                service = valid_params.pop('service', 'ssh')
+                username = valid_params.pop('username', 'root')
+                wordlist = valid_params.pop('wordlist', '/usr/share/wordlists/rockyou.txt')
+                cmd = f"medusa -h {target} -u {username} -P {wordlist} -M {service}"
+                if 'threads' in valid_params:
+                    cmd += f" -t {valid_params.pop('threads')}"
+
+            # 特殊处理 patator (需要 host 和 port)
+            elif tool_name == 'patator':
+                module = valid_params.pop('module', 'ssh_login')
+                cmd = f"patator {module} host={target}"
+                if 'user' in valid_params:
+                    cmd += f" user={valid_params.pop('user')}"
+                if 'password' in valid_params:
+                    cmd += f" password={valid_params.pop('password')}"
 
             # 处理 additional_args (所有工具通用，追加到末尾)
             additional_args = valid_params.pop('additional_args', '')
