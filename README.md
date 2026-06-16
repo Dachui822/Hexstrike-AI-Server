@@ -43,7 +43,7 @@
 ## ✨ 工程化升级 (v6.1)
 
 本次更新将单体脚本重构为**生产级企业架构**，直接部署于项目根目录：
-- 🏗️ **扁平化结构**：Python 代码位于 `app/`，前端位于 `frontend/`，无冗余嵌套
+- 🏗️ **扁平化结构**：Python 代码位于 `app/`，无冗余嵌套
 - 📦 **任务池管理**：Redis 队列 + MySQL 持久化，支持优先级调度与实时进度
 - 🔌 **MCP 协议原生支持**：标准 JSON-RPC 2.0 接口，无缝对接 Claude/Cursor
 - 📊 **可视化监控**：ECharts 资源图表，SSE 流式日志控制台
@@ -116,7 +116,6 @@ docker-compose up -d
 docker-compose logs -f backend
 ```
 访问：
-- 前端 UI: `http://localhost`
 - MCP 端点: `http://localhost:8888/mcp`
 
 ### 2. 本地开发
@@ -190,10 +189,6 @@ hexstrike-ai/
 │   ├── routes/
 │   ├── services/
 │   └── stores/
-├── frontend/           # React 前端
-│   ├── src/
-│   ├── package.json
-│   └── vite.config.ts
 ├── scripts/            # 初始化脚本
 ├── run.py              # 启动入口
 ├── gunicorn.conf.py    # 生产配置

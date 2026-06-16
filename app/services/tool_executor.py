@@ -60,6 +60,47 @@ class ToolExecutor:
                 if 'threads' in valid_params:
                     cmd += f" -t {valid_params.pop('threads')}"
 
+            # 特殊处理 subfinder (需要 -d domain)
+            elif tool_name == 'subfinder':
+                cmd = f"subfinder -d {target}"
+                if 'sources' in valid_params:
+                    cmd += f" -s {valid_params.pop('sources')}"
+                if 'recursive' in valid_params and valid_params.pop('recursive') in [True, 'true', '1']:
+                    cmd += " -recursive"
+
+            # 特殊处理 amass (需要 enum -domain)
+            elif tool_name == 'amass':
+                cmd = f"amass enum -d {target}"
+                if 'mode' in valid_params:
+                    mode = valid_params.pop('mode')
+                    if mode == 'passive':
+                        cmd = f"amass enum -passive -d {target}"
+                    elif mode == 'active':
+                        cmd = f"amass enum -active -d {target}"
+                if 'sources' in valid_params:
+                    cmd += f" -src {valid_params.pop('sources')}"
+
+            # 特殊处理 fierce (需要 -domain)
+            elif tool_name == 'fierce':
+                cmd = f"fierce -domain {target}"
+                if 'threads' in valid_params:
+                    cmd += f" --threads {valid_params.pop('threads')}"
+
+            # 特殊处理 theHarvester (需要 -d domain -b source)
+            elif tool_name == 'theHarvester':
+                source = valid_params.pop('source', 'all')
+                cmd = f"theHarvester -d {target} -b {source}"
+                if 'limit' in valid_params:
+                    cmd += f" -l {valid_params.pop('limit')}"
+
+            # 特殊处理 httpx (需要 -u 或 -l)
+            elif tool_name == 'httpx':
+                cmd = f"httpx -u {target}"
+                if 'status_code' in valid_params and valid_params.pop('status_code') in [True, 'true', '1']:
+                    cmd += " -sc"
+                if 'title' in valid_params and valid_params.pop('title') in [True, 'true', '1']:
+                    cmd += " -title"
+
             # 特殊处理 nmap (支持 scan_type 和 ports)
             elif tool_name == 'nmap':
                 cmd = f"nmap {target}"
@@ -75,6 +116,138 @@ class ToolExecutor:
                     cmd += f" --level={valid_params.pop('level')}"
                 if 'risk' in valid_params:
                     cmd += f" --risk={valid_params.pop('risk')}"
+
+            # 特殊处理 dirb (需要 URL)
+            elif tool_name == 'dirb':
+                cmd = f"dirb {target}"
+                if 'wordlist' in valid_params:
+                    cmd += f" {valid_params.pop('wordlist')}"
+                if 'extensions' in valid_params:
+                    cmd += f" -e {valid_params.pop('extensions')}"
+                if 'recursive' in valid_params and valid_params.pop('recursive') in [True, 'true', '1']:
+                    cmd += " -r"
+
+            # 特殊处理 nikto (需要 -h)
+            elif tool_name == 'nikto':
+                cmd = f"nikto -h {target}"
+                if 'port' in valid_params:
+                    cmd += f" -p {valid_params.pop('port')}"
+                if 'ssl' in valid_params and valid_params.pop('ssl') in [True, 'true', '1']:
+                    cmd += " -ssl"
+
+            # 特殊处理 ffuf (需要 -u)
+            elif tool_name == 'ffuf':
+                cmd = f"ffuf -u {target}"
+                if 'wordlist' in valid_params:
+                    cmd += f" -w {valid_params.pop('wordlist')}"
+                if 'method' in valid_params:
+                    cmd += f" -X {valid_params.pop('method')}"
+                if 'headers' in valid_params:
+                    cmd += f" -H {valid_params.pop('headers')}"
+
+            # 特殊处理 feroxbuster (需要 -u)
+            elif tool_name == 'feroxbuster':
+                cmd = f"feroxbuster -u {target}"
+                if 'wordlist' in valid_params:
+                    cmd += f" -w {valid_params.pop('wordlist')}"
+                if 'threads' in valid_params:
+                    cmd += f" -t {valid_params.pop('threads')}"
+                if 'depth' in valid_params:
+                    cmd += f" -d {valid_params.pop('depth')}"
+
+            # 特殊处理 wpscan (需要 --url)
+            elif tool_name == 'wpscan':
+                cmd = f"wpscan --url {target}"
+                if 'api_token' in valid_params:
+                    cmd += f" --api-token {valid_params.pop('api_token')}"
+                if 'enumerate' in valid_params:
+                    cmd += f" --enumerate {valid_params.pop('enumerate')}"
+                if 'plugins_detection' in valid_params:
+                    cmd += f" --plugins-detection {valid_params.pop('plugins_detection')}"
+
+            # 特殊处理 nuclei (需要 -target)
+            elif tool_name == 'nuclei':
+                cmd = f"nuclei -target {target}"
+                if 'templates' in valid_params:
+                    cmd += f" -t {valid_params.pop('templates')}"
+                if 'severity' in valid_params:
+                    cmd += f" -severity {valid_params.pop('severity')}"
+                if 'tags' in valid_params:
+                    cmd += f" -tags {valid_params.pop('tags')}"
+
+            # 特殊处理 katana (需要 -u)
+            elif tool_name == 'katana':
+                cmd = f"katana -u {target}"
+                if 'depth' in valid_params:
+                    cmd += f" -d {valid_params.pop('depth')}"
+                if 'scope' in valid_params:
+                    cmd += f" -scope {valid_params.pop('scope')}"
+
+            # 特殊处理 hakrawler (需要 -u)
+            elif tool_name == 'hakrawler':
+                cmd = f"hakrawler -u {target}"
+                if 'depth' in valid_params:
+                    cmd += f" -depth {valid_params.pop('depth')}"
+
+            # 特殊处理 hydra (需要 target 和 service)
+            elif tool_name == 'hydra':
+                service = valid_params.pop('service', 'ssh')
+                username = valid_params.pop('username', 'root')
+                wordlist = valid_params.pop('wordlist', '/usr/share/wordlists/rockyou.txt')
+                cmd = f"hydra -l {username} -P {wordlist} {target} {service}"
+                if 'threads' in valid_params:
+                    cmd += f" -t {valid_params.pop('threads')}"
+                if 'timeout' in valid_params:
+                    cmd += f" -w {valid_params.pop('timeout')}"
+
+            # 特殊处理 hashcat (需要 hash_type 和 wordlist)
+            elif tool_name == 'hashcat':
+                hash_type = valid_params.pop('hash_type', '0')
+                wordlist = valid_params.pop('wordlist', '/usr/share/wordlists/rockyou.txt')
+                cmd = f"hashcat -m {hash_type} -a 0 {target} {wordlist}"
+                if 'force' in valid_params and valid_params.pop('force') in [True, 'true', '1']:
+                    cmd += " --force"
+
+            # 特殊处理 john (需要 wordlist)
+            elif tool_name == 'john':
+                wordlist = valid_params.pop('wordlist', '/usr/share/wordlists/rockyou.txt')
+                cmd = f"john --wordlist={wordlist} {target}"
+                if 'format' in valid_params:
+                    cmd += f" --format={valid_params.pop('format')}"
+
+            # 特殊处理 rustscan (需要 -a)
+            elif tool_name == 'rustscan':
+                cmd = f"rustscan -a {target}"
+                if 'ports' in valid_params:
+                    cmd += f" -p {valid_params.pop('ports')}"
+                if 'top' in valid_params:
+                    cmd += f" --top {valid_params.pop('top')}"
+
+            # 特殊处理 masscan (需要 -p)
+            elif tool_name == 'masscan':
+                cmd = f"masscan {target}"
+                if 'ports' in valid_params:
+                    cmd += f" -p {valid_params.pop('ports')}"
+                if 'rate' in valid_params:
+                    cmd += f" --rate {valid_params.pop('rate')}"
+
+            # 特殊处理 responder (需要 -I 接口)
+            elif tool_name == 'responder':
+                interface = valid_params.pop('interface', 'eth0')
+                cmd = f"responder -I {interface}"
+                if 'analyze' in valid_params and valid_params.pop('analyze') in [True, 'true', '1']:
+                    cmd += " -A"
+                else:
+                    cmd += " -wrf"
+
+            # 特殊处理 nxc/crackmapexec (需要 target 和协议)
+            elif tool_name in ['nxc', 'crackmapexec']:
+                protocol = valid_params.pop('protocol', 'smb')
+                cmd = f"nxc {protocol} {target}"
+                if 'username' in valid_params:
+                    cmd += f" -u {valid_params.pop('username')}"
+                if 'password' in valid_params:
+                    cmd += f" -p {valid_params.pop('password')}"
 
             # 处理 additional_args (所有工具通用，追加到末尾)
             additional_args = valid_params.pop('additional_args', '')
