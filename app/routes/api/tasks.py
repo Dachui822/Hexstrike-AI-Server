@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from app.services.task_manager import task_manager
+from app.services.task_manager import task_manager, cleanup_stuck_tasks
 from app.extensions import db
 from app.models.task import Task
 
@@ -95,12 +95,24 @@ def update_config():
     """更新任务调度配置"""
     data = request.json
     new_limit = data.get('max_workers')
-    
+
     if new_limit is None or not isinstance(new_limit, int) or new_limit < 1:
         return jsonify({"error": "Invalid max_workers value"}), 400
-    
+
     task_manager.update_max_workers(new_limit)
     return jsonify({
         "success": True,
         "max_workers": task_manager.max_workers
     })
+
+@bp.route('/cleanup', methods=['POST'])
+def cleanup_stuck():
+    """清理卡住的任务（状态为 RUNNING 超过 1 小时）"""
+    try:
+        cleaned = cleanup_stuck_tasks()
+        return jsonify({
+            "success": True,
+            "cleaned_count": cleaned
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500

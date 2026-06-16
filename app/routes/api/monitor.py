@@ -30,14 +30,17 @@ def stream_logs(task_id):
         pubsub = extensions.redis_client.pubsub()
         pubsub.subscribe('hexstrike:logs')
 
+        # 读取历史日志（从 Redis List，按时间正序）
         history = extensions.redis_client.lrange(f"task:{task_id}:logs", 0, -1)
-        for msg in reversed(history):
-            yield f"data: {json.dumps({'task_id': task_id, 'message': msg})}\n\n"
+        for msg in history:
+            yield f"data: {json.dumps({'message': msg})}\n\n"
 
+        # 监听实时日志（从 Redis Pub/Sub）
         for message in pubsub.listen():
             if message['type'] == 'message':
-                data = message['data'].split('|', 1)
-                if len(data) == 2 and data[0] == task_id:
-                    yield f"data: {json.dumps({'task_id': task_id, 'message': data[1]})}\n\n"
+                data = message['data'].decode('utf-8') if isinstance(message['data'], bytes) else message['data']
+                parts = data.split('|', 1)
+                if len(parts) == 2 and parts[0] == task_id:
+                    yield f"data: {json.dumps({'message': parts[1]})}\n\n"
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream')

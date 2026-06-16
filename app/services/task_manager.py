@@ -3,11 +3,13 @@ import uuid
 import time
 import os
 import logging
-from concurrent.futures import ThreadPoolExecutor
+import threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from app.extensions import db
 import app.extensions as extensions
 from app.models.task import Task, TaskStatus, TaskLog
 from app.services.tool_executor import ToolExecutor
+from app.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -110,14 +112,49 @@ class TaskManager:
                 extensions.redis_client.zrem("task:queue", task_id)
 
             future = self.executor.submit(
-                self.executor_instance.run, 
-                task_id, 
-                task.tool_name, 
-                task.target, 
+                self.executor_instance.run,
+                task_id,
+                task.tool_name,
+                task.target,
                 task.params
             )
             self.running_tasks[task_id] = future
             future.add_done_callback(lambda f: self._on_task_complete(task_id, f))
+
+            # 设置超时保护 (如果任务超过 TASK_TIMEOUT 秒未完成，强制标记为超时)
+            timeout = Config.TASK_TIMEOUT
+            threading.Thread(target=self._watchdog, args=(task_id, future, timeout), daemon=True).start()
+
+    def _watchdog(self, task_id: str, future, timeout: int):
+        """看门狗：监控任务超时"""
+        try:
+            future.result(timeout=timeout)
+        except FuturesTimeoutError:
+            logger.error(f"⏰ Task {task_id} timed out after {timeout} seconds")
+            # 超时后强制更新状态
+            with self._app.app_context():
+                task = db.session.get(Task, task_id)
+                if task and task.status == TaskStatus.RUNNING:
+                    task.status = TaskStatus.TIMEOUT
+                    task.error_message = f"Task timed out after {timeout} seconds"
+                    task.completed_at = db.func.now()
+                    db.session.commit()
+                    
+                    if extensions.redis_client:
+                        extensions.redis_client.delete(f"task:{task_id}:lock")
+                        extensions.redis_client.delete(f"task:{task_id}")
+                        extensions.redis_client.delete(f"task:{task_id}:logs")
+                    
+                    self.running_tasks.pop(task_id, None)
+                    logger.info(f"⏰ Task {task_id} marked as TIMEOUT")
+        except Exception as e:
+            logger.warning(f"Watchdog error for {task_id}: {e}")
+
+    def _app_context(self):
+        """创建应用上下文"""
+        from app import create_app
+        app = create_app()
+        return app.app_context()
 
     def _on_task_complete(self, task_id: str, future):
         """任务完成回调"""
@@ -215,3 +252,38 @@ class TaskManager:
             return True
 
 task_manager = TaskManager()
+
+def cleanup_stuck_tasks():
+    """清理卡住的任务（用于手动执行）"""
+    from datetime import datetime, timedelta
+    
+    with task_manager._app_context():
+        # 查找超过 1 小时仍然是 RUNNING 的任务
+        one_hour_ago = datetime.now() - timedelta(hours=1)
+        stuck_tasks = Task.query.filter(
+            Task.status == TaskStatus.RUNNING,
+            Task.started_at < one_hour_ago
+        ).all()
+        
+        cleaned = 0
+        for task in stuck_tasks:
+            logger.warning(f"🧹 Cleaning up stuck task {task.id}")
+            task.status = TaskStatus.TIMEOUT
+            task.error_message = "Task cleaned up by cleanup_stuck_tasks()"
+            task.completed_at = db.func.now()
+            
+            if extensions.redis_client:
+                extensions.redis_client.delete(f"task:{task.id}:lock")
+                extensions.redis_client.delete(f"task:{task.id}")
+                extensions.redis_client.delete(f"task:{task.id}:logs")
+            
+            cleaned += 1
+        
+        db.session.commit()
+        
+        if cleaned > 0:
+            logger.info(f"✅ Cleaned up {cleaned} stuck tasks")
+        else:
+            logger.info("ℹ️ No stuck tasks found")
+        
+        return cleaned
