@@ -70,7 +70,9 @@ class ToolExecutor:
                 if 'recursive' in valid_params and valid_params.pop('recursive') in [True, 'true', '1']:
                     cmd += " -r"
             
-            # 特殊处理 gobuster (需要 -u 和 mode)
+            # 特殊处理 gobuster (需要 mode 子命令和 -u)
+            # 命令格式：gobuster <mode> -u <url> [options]
+            # mode: dir, dns, vhost, fuzz, tftp, s3, gcs
             elif tool_name == 'gobuster':
                 mode = valid_params.pop('mode', 'dir')
                 cmd = f"gobuster {mode} -u {target}"
@@ -78,6 +80,14 @@ class ToolExecutor:
                     cmd += f" -w {valid_params.pop('wordlist')}"
                 if 'threads' in valid_params:
                     cmd += f" -t {valid_params.pop('threads')}"
+                if 'extensions' in valid_params:
+                    cmd += f" -x {valid_params.pop('extensions')}"
+                if 'recursive' in valid_params and valid_params.pop('recursive') in [True, 'true', '1']:
+                    cmd += " -r"
+                if 'status_codes' in valid_params:
+                    cmd += f" -s {valid_params.pop('status_codes')}"
+                if 'method' in valid_params:
+                    cmd += f" -m {valid_params.pop('method')}"
 
             # 特殊处理 subfinder (需要 -d domain)
             elif tool_name == 'subfinder':
@@ -112,13 +122,17 @@ class ToolExecutor:
                 if 'limit' in valid_params:
                     cmd += f" -l {valid_params.pop('limit')}"
 
-            # 特殊处理 httpx (需要 -u 或 -l)
+            # 特殊处理 httpx (格式：httpx [OPTIONS] URL)
             elif tool_name == 'httpx':
-                cmd = f"httpx -u {target}"
+                cmd = f"httpx {target}"
                 if 'status_code' in valid_params and valid_params.pop('status_code') in [True, 'true', '1']:
                     cmd += " -sc"
                 if 'title' in valid_params and valid_params.pop('title') in [True, 'true', '1']:
                     cmd += " -title"
+                if 'content_length' in valid_params and valid_params.pop('content_length') in [True, 'true', '1']:
+                    cmd += " -cl"
+                if 'server' in valid_params and valid_params.pop('server') in [True, 'true', '1']:
+                    cmd += " -server"
 
             # 特殊处理 nmap (支持 scan_type 和 ports)
             elif tool_name == 'nmap':
@@ -146,13 +160,28 @@ class ToolExecutor:
                 if 'recursive' in valid_params and valid_params.pop('recursive') in [True, 'true', '1']:
                     cmd += " -r"
 
-            # 特殊处理 nikto (需要 -h)
+            # 特殊处理 nikto (需要 -host 参数)
+            # 命令格式：nikto -host <url> [options]
             elif tool_name == 'nikto':
-                cmd = f"nikto -h {target}"
+                cmd = f"nikto -host {target}"
                 if 'port' in valid_params:
-                    cmd += f" -p {valid_params.pop('port')}"
+                    cmd += f" -port {valid_params.pop('port')}"
                 if 'ssl' in valid_params and valid_params.pop('ssl') in [True, 'true', '1']:
                     cmd += " -ssl"
+                if 'timeout' in valid_params:
+                    cmd += f" -timeout {valid_params.pop('timeout')}"
+                if 'useragent' in valid_params:
+                    cmd += f" -useragent {valid_params.pop('useragent')}"
+                if 'tuning' in valid_params:
+                    cmd += f" -Tuning {valid_params.pop('tuning')}"
+                if 'output' in valid_params:
+                    cmd += f" -output {valid_params.pop('output')}"
+                if 'format' in valid_params:
+                    cmd += f" -Format {valid_params.pop('format')}"
+                if 'vhost' in valid_params:
+                    cmd += f" -vhost {valid_params.pop('vhost')}"
+                if 'id' in valid_params:
+                    cmd += f" -id {valid_params.pop('id')}"
 
             # 特殊处理 ffuf (需要 -u)
             elif tool_name == 'ffuf':
