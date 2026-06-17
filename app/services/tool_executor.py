@@ -401,9 +401,12 @@ class ToolExecutor:
     def _push_log(self, task_id: str, message: str, source: str):
         """推送日志到 MySQL 和 Redis"""
         if extensions.redis_client:
-            extensions.redis_client.lpush(f"task:{task_id}:logs", message)
-            extensions.redis_client.publish("hexstrike:logs", f"{task_id}|{message}")
-            logger.debug(f"[DEBUG] Pushed log to Redis for task {task_id}: {message[:100]}")
+            try:
+                extensions.redis_client.lpush(f"task:{task_id}:logs", message)
+                extensions.redis_client.publish("hexstrike:logs", f"{task_id}|{message}")
+                logger.info(f"[LOG] Pushed log for task {task_id}: {message[:80]}...")
+            except Exception as e:
+                logger.error(f"Failed to push log to Redis: {e}")
 
         log_entry = TaskLog(task_id=task_id, message=message, source=source, level='INFO')
         db.session.add(log_entry)
