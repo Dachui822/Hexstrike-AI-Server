@@ -131,19 +131,23 @@ def delete_tool(tool_name):
 
 @bp.route('/<tool_name>', methods=['PUT'])
 def update_tool(tool_name):
-    """更新工具配置（支持修改健康检测命令）"""
+    """更新工具配置（支持修改健康检测命令和依赖项）"""
     data = request.get_json()
     tool = db.session.get(Tool, tool_name)
     if not tool:
         return jsonify({"error": "Tool not found"}), 404
-    
+
     if 'health_check_cmd' in data:
         tool.health_check_cmd = data['health_check_cmd']
-    
+
+    if 'dependencies' in data:
+        tool.dependencies = data['dependencies']
+
     db.session.commit()
     return jsonify({
         "success": True,
-        "health_check_cmd": tool.health_check_cmd
+        "health_check_cmd": tool.health_check_cmd,
+        "dependencies": tool.dependencies
     })
 
 @bp.route('/<tool_name>', methods=['POST'])

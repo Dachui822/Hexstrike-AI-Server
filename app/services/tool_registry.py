@@ -210,15 +210,18 @@ class ToolRegistry:
             return {"name": tool_name, "available": False, "error": "Tool not registered"}
 
         try:
-            for pkg_type, pkgs in (tool.dependencies or {}).items():
-                if pkg_type == 'apt':
-                    for pkg in pkgs:
-                        if subprocess.run(['which', pkg], capture_output=True).returncode != 0:
-                            raise Exception(f"Missing dependency: {pkg}")
-                elif pkg_type == 'pip':
-                    for pkg in pkgs:
-                        if subprocess.run(['pip', 'show', pkg], capture_output=True).returncode != 0:
-                            raise Exception(f"Missing pip package: {pkg}")
+            # 检查依赖项（当依赖项为 "-" 时跳过检查）
+            deps = tool.dependencies or {}
+            if deps != "-":
+                for pkg_type, pkgs in deps.items():
+                    if pkg_type == 'apt':
+                        for pkg in pkgs:
+                            if subprocess.run(['which', pkg], capture_output=True).returncode != 0:
+                                raise Exception(f"Missing dependency: {pkg}")
+                    elif pkg_type == 'pip':
+                        for pkg in pkgs:
+                            if subprocess.run(['pip', 'show', pkg], capture_output=True).returncode != 0:
+                                raise Exception(f"Missing pip package: {pkg}")
 
             result = subprocess.run(tool.health_check_cmd.split(), capture_output=True, text=True, timeout=Config.HEALTH_CHECK_TIMEOUT)
             
