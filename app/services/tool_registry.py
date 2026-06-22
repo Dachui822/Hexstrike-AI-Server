@@ -184,9 +184,8 @@ class ToolRegistry:
                 db.session.add(tool)
                 count_new += 1
             else:
-                # 已存在：仅同步依赖类型，不覆盖 health_check_cmd（保留用户自定义）
-                if tool.dependencies != t_data.get('dependencies'):
-                    tool.dependencies = t_data.get('dependencies')
+                # 已存在：不覆盖 health_check_cmd 和 dependencies（保留用户自定义）
+                pass
 
         if count_new > 0:
             db.session.commit()
@@ -226,18 +225,21 @@ class ToolRegistry:
             result = subprocess.run(tool.health_check_cmd.split(), capture_output=True, text=True, timeout=Config.HEALTH_CHECK_TIMEOUT)
             
             output_text = result.stdout + result.stderr
-            
+
             # 尝试从输出中提取版本号 (如 v1.2.3, 1.2.3, 2.22)
             version_match = re.search(r'v?(\d+\.\d+(\.\d+)?)', output_text)
-            
-            # 判断可用性的标准：退出码为 0，或者成功提取到了版本号
-            if result.returncode == 0 or version_match:
+
+            # 检查是否包含 usage 关键字（部分工具无 --version 选项，但会输出 usage）
+            has_usage = 'usage' in output_text.lower()
+
+            # 判断可用性的标准：退出码为 0，或者成功提取到了版本号，或者包含 usage 关键字
+            if result.returncode == 0 or version_match or has_usage:
                 tool.is_available = True
                 if version_match:
                     # 优先使用正则匹配到的版本号
                     tool.installed_version = version_match.group(0)[:255]
                 else:
-                    # 如果没有匹配到版本号，但退出码为 0，取第一行作为版本描述
+                    # 如果没有匹配到版本号，但退出码为 0 或包含 usage，取第一行作为版本描述
                     first_line = next((line.strip() for line in output_text.split('\n') if line.strip()), "Unknown")
                     tool.installed_version = first_line[:255]
             else:
