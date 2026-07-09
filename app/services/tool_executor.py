@@ -231,9 +231,9 @@ class ToolExecutor:
                 if 'scope' in valid_params:
                     cmd += f" -scope {valid_params.pop('scope')}"
 
-            # 特殊处理 hakrawler (需要 -u)
+            # 特殊处理 hakrawler (从 stdin 读取 URL，使用管道传递)
             elif tool_name == 'hakrawler':
-                cmd = f"hakrawler -u {target}"
+                cmd = f"echo '{target}' | hakrawler"
                 if 'depth' in valid_params:
                     cmd += f" -depth {valid_params.pop('depth')}"
 
