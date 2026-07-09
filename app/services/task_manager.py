@@ -68,6 +68,11 @@ class TaskManager:
                     time.sleep(5)
                     continue
 
+                # 动态注册 Lua 脚本（解决 Flask 启动顺序导致 __init__ 中 Redis 未初始化而缺失属性的问题）
+                if not hasattr(self, '_acquire_script'):
+                    self._acquire_script = extensions.redis_client.register_script(LUA_ACQUIRE)
+                    self._release_script = extensions.redis_client.register_script(LUA_RELEASE)
+
                 # 1. 检查全局并发限制
                 can_run = self._acquire_script(keys=['task:global:running'], args=[self.max_workers])
                 if not can_run:
