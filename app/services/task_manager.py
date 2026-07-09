@@ -18,9 +18,17 @@ _DEFAULT_MAX_WORKERS = int(os.environ.get("MAX_WORKERS", 3))
 
 class TaskManager:
     def __init__(self, max_workers=_DEFAULT_MAX_WORKERS):
+        # 尝试从 Redis 恢复配置，确保多 Worker 环境下保持一致
+        if extensions.redis_client:
+            try:
+                val = extensions.redis_client.get('app:config:max_workers')
+                if val:
+                    max_workers = int(val)
+            except Exception:
+                pass
         self.max_workers = max_workers  # 动态并发限制
         # 线程池保持足够大，实际并发由 max_workers 控制
-        self.executor = ThreadPoolExecutor(max_workers=100) 
+        self.executor = ThreadPoolExecutor(max_workers=100)
         self.running_tasks = {}  # task_id -> Future object
         self.executor_instance = ToolExecutor()
 
@@ -29,6 +37,12 @@ class TaskManager:
         if new_limit < 1:
             new_limit = 1
         self.max_workers = new_limit
+        # 同步到 Redis，确保多 Worker 环境下配置一致
+        if extensions.redis_client:
+            try:
+                extensions.redis_client.set('app:config:max_workers', new_limit)
+            except Exception as e:
+                logger.warning(f"Failed to sync max_workers to Redis: {e}")
         logger.info(f"🔄 Max concurrent tasks updated to {new_limit}")
         # 触发调度，如果新限制允许，可能启动等待中的任务
         self._dispatch()
