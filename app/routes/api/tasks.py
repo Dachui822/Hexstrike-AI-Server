@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 from app.services.task_manager import task_manager, cleanup_stuck_tasks
 from app.extensions import db
-from app.models.task import Task
+from app.models.task import Task, TaskStatus
 
 bp = Blueprint('tasks', __name__)
 
