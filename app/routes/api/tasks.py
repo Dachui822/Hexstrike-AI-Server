@@ -87,20 +87,22 @@ def get_config():
     """获取任务调度配置"""
     import app.extensions as extensions
     
-    # 优先从 Redis 读取，确保多 Worker 环境下配置一致
     max_workers = task_manager.max_workers
     if extensions.redis_client:
         try:
             val = extensions.redis_client.get('app:config:max_workers')
             if val:
                 max_workers = int(val)
-                task_manager.max_workers = max_workers  # 同步本地内存
-        except Exception as e:
-            pass  # Redis 读取失败时降级使用本地内存值
+                task_manager.max_workers = max_workers
+        except Exception:
+            pass
+            
+    # 从数据库统计全局运行中任务数（跨 Worker 准确）
+    running_count = Task.query.filter(Task.status == TaskStatus.RUNNING).count()
             
     return jsonify({
         "max_workers": max_workers,
-        "running_tasks": len(task_manager.running_tasks)
+        "running_tasks": running_count
     })
 
 @bp.route('/config', methods=['PUT'])
