@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify
 from app.services.task_manager import task_manager, cleanup_stuck_tasks
 from app.services.tool_executor import ToolExecutor
 from app.extensions import db
+import app.extensions as extensions
 from app.models.task import Task, TaskStatus
 
 bp = Blueprint('tasks', __name__)
@@ -135,28 +136,34 @@ def cleanup_stuck():
 
 @bp.route('/<task_id>/cancel', methods=['POST'])
 def cancel_task(task_id):
-    """取消运行中的任务"""
+    """取消运行中的任务（通过 Redis 设置取消标志）"""
     try:
-        # 更新数据库状态
+        # 检查任务是否存在
         task = db.session.get(Task, task_id)
         if not task:
             return jsonify({"error": "Task not found"}), 404
-        
+
         if task.status != TaskStatus.RUNNING:
             return jsonify({"error": f"Task is not running (status: {task.status.value})"}), 400
-        
-        # 调用执行器取消
-        executor = ToolExecutor()
-        success = executor.cancel_task(task_id)
-        
-        if success:
-            task.status = TaskStatus.CANCELLED
-            task.completed_at = db.func.now()
-            db.session.commit()
-            return jsonify({"success": True, "message": "Task cancelled"})
+
+        # 设置 Redis 取消标志（任务执行时会检查）
+        if extensions.redis_client:
+            extensions.redis_client.set(f"task:{task_id}:cancel", "1")
+            logger.info(f"🛑 Cancel signal set for task {task_id} in Redis")
         else:
-            return jsonify({"error": "Failed to cancel task"}), 500
+            logger.warning("Redis not available, cancel signal not set")
+
+        # 立即更新数据库状态（可选：也可以等任务自己退出后再更新）
+        task.status = TaskStatus.CANCELLED
+        task.completed_at = db.func.now()
+        db.session.commit()
+
+        return jsonify({
+            "success": True, 
+            "message": "Cancel signal sent. Task will stop shortly."
+        })
     except Exception as e:
+        logger.error(f"Failed to cancel task {task_id}: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 @bp.route('/active', methods=['GET'])

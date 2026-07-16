@@ -11,8 +11,6 @@ from app.models.tool import Tool
 
 logger = logging.getLogger(__name__)
 
-# 全局字典：跟踪活跃任务
-_active_tasks = {}
 
 
 class _OutputReader:
@@ -459,14 +457,6 @@ class ToolExecutor:
                 check_interval = 2  # 每2秒检查一次进程状态
                 idle_timeout = int(os.environ.get("IDLE_TIMEOUT", 300))  # 空闲超时：5分钟无输出则终止
 
-                # 注册活跃任务，支持手动取消
-                _active_tasks[task_id] = {
-                    'process': process,
-                    'stdout_reader': None,
-                    'stderr_reader': None,
-                    'start_time': start_time
-                }
-
                 # 打开输出文件
                 with open(output_path, 'w', encoding='utf-8') as out_file:
                     # 启动非阻塞读取器
@@ -481,11 +471,7 @@ class ToolExecutor:
                     stdout_reader.start()
                     stderr_reader.start()
 
-                    # 更新活跃任务信息
-                    _active_tasks[task_id]['stdout_reader'] = stdout_reader
-                    _active_tasks[task_id]['stderr_reader'] = stderr_reader
-
-                    # 主循环：监控进程状态（空闲超时机制）
+                    # 主循环：监控进程状态（空闲超时机制 + Redis 取消标志）
                     while True:
                         # 检查进程是否退出
                         exit_code = process.poll()
@@ -494,11 +480,26 @@ class ToolExecutor:
                             logger.info(f"Process exited with code {exit_code} for task {task_id}")
                             break
 
+                        # 检查 Redis 取消标志
+                        if extensions.redis_client:
+                            try:
+                                cancel_flag = extensions.redis_client.get(f"task:{task_id}:cancel")
+                                if cancel_flag == "1":
+                                    logger.info(f"🛑 Task {task_id} received cancel signal from Redis")
+                                    self._push_log(task_id, "🛑 Task cancelled by user", 'system')
+                                    self._terminate_process(process, task_id)
+                                    exit_code = process.poll()
+                                    # 清理取消标志
+                                    extensions.redis_client.delete(f"task:{task_id}:cancel")
+                                    break
+                            except Exception as e:
+                                logger.error(f"Failed to check cancel flag: {e}")
+
                         # 检查空闲超时（如果两个读取器都超过空闲时间没有输出）
                         stdout_idle = stdout_reader.get_idle_seconds()
                         stderr_idle = stderr_reader.get_idle_seconds()
                         if stdout_idle > idle_timeout and stderr_idle > idle_timeout:
-                            logger.warning(f"⏸️ Task {task_id} idle timeout after {stdout_idle:.0f}s (limit: {idle_timeout}s)")
+                            logger.warning(f"️ Task {task_id} idle timeout after {stdout_idle:.0f}s (limit: {idle_timeout}s)")
                             self._push_log(task_id, f"⏸️ Task idle timeout - no output for {stdout_idle:.0f}s", 'system')
                             self._terminate_process(process, task_id)
                             exit_code = process.poll()
@@ -543,13 +544,6 @@ class ToolExecutor:
                         process.kill()
                     except Exception:
                         pass
-                # 从活跃任务中移除
-                _active_tasks.pop(task_id, None)
-
-    def cancel_task(self, task_id: str) -> bool:
-        """手动取消任务"""
-        if task_id not in _active_tasks:
-            return False
         
         task_info = _active_tasks[task_id]
         process = task_info.get('process')
@@ -561,20 +555,10 @@ class ToolExecutor:
             return True
         return False
 
-    @staticmethod
-    def get_active_tasks():
-        """获取所有活跃任务"""
-        return {
-            task_id: {
-                'pid': info['process'].pid if info['process'] else None,
-                'start_time': info['start_time'],
-                'elapsed': time.time() - info['start_time']
-            }
-            for task_id, info in _active_tasks.items()
-        }
 
-    def _terminate_process(self, process, task_id: str):
-        """终止进程及其子进程"""
+    @staticmethod
+    def _static_terminate_process(process, task_id: str):
+        """静态方法：终止进程及其子进程（供外部调用）"""
         try:
             if os.name == 'nt':  # Windows
                 process.terminate()
@@ -597,6 +581,10 @@ class ToolExecutor:
                 process.kill()
             except Exception:
                 pass
+
+    def _terminate_process(self, process, task_id: str):
+        """终止进程及其子进程"""
+        self._static_terminate_process(process, task_id)
 
     def _push_log(self, task_id: str, message: str, source: str):
         """推送日志到 MySQL 和 Redis"""
