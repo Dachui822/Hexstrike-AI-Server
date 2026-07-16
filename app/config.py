@@ -39,7 +39,6 @@ class Config:
     
     # Task Pool
     MAX_WORKERS = int(os.environ.get("MAX_WORKERS", 3))
-    TASK_TIMEOUT = int(os.environ.get("TASK_TIMEOUT", 3600))
 
     # Tool Health Check
     AUTO_HEALTH_CHECK = os.environ.get("AUTO_HEALTH_CHECK", "true").lower() == "true"

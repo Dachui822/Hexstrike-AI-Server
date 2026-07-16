@@ -10,6 +10,12 @@ bp = Blueprint('logs', __name__)
 
 LOG_FILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..', 'hexstrike.log')
 
+# 日志文件缓存
+_log_cache = {
+    'last_line_count': 0,
+    'last_mtime': 0.0
+}
+
 def _read_task_output(task):
     """读取任务输出内容"""
     if task.output_path and os.path.exists(task.output_path):
@@ -26,25 +32,40 @@ def _read_task_output(task):
 def get_system_logs():
     """获取系统日志 (读取 hexstrike.log 文件)"""
     limit = request.args.get('limit', 500, type=int)
+    since_line = request.args.get('since_line', 0, type=int)  # 从第几行开始获取
     
     if not os.path.exists(LOG_FILE_PATH):
         return jsonify({"logs": [], "message": "日志文件不存在"})
 
     try:
         with open(LOG_FILE_PATH, 'r', encoding='utf-8', errors='ignore') as f:
-            # 读取最后 N 行
             lines = f.readlines()
-            recent_logs = lines[-limit:] if len(lines) > limit else lines
+            total_lines = len(lines)
             
-            # 清理换行符
-            cleaned_logs = [line.strip() for line in recent_logs if line.strip()]
-            
-        return jsonify({
-            "success": True,
-            "logs": cleaned_logs,
-            "total_lines": len(lines),
-            "returned_lines": len(cleaned_logs)
-        })
+            # 如果指定了 since_line，只获取新日志
+            if since_line > 0 and since_line < total_lines:
+                new_lines = lines[since_line:]
+                cleaned_logs = [line.strip() for line in new_lines if line.strip()]
+                return jsonify({
+                    "success": True,
+                    "logs": cleaned_logs,
+                    "total_lines": total_lines,
+                    "since_line": since_line,
+                    "new_lines": len(cleaned_logs),
+                    "is_incremental": True
+                })
+            else:
+                # 获取最后 N 行（首次加载或清空后重新加载）
+                recent_logs = lines[-limit:] if len(lines) > limit else lines
+                cleaned_logs = [line.strip() for line in recent_logs if line.strip()]
+                
+                return jsonify({
+                    "success": True,
+                    "logs": cleaned_logs,
+                    "total_lines": total_lines,
+                    "returned_lines": len(cleaned_logs),
+                    "is_incremental": False
+                })
     except Exception as e:
         logger.error(f"Failed to read system logs: {e}")
         return jsonify({"success": False, "error": str(e)}), 500

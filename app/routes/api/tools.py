@@ -73,7 +73,7 @@ def create_tool():
     tool = Tool(
         name=data['name'],
         display_name=data['display_name'],
-        category=data['category'],
+        category=data.get('category', 'custom'),
         description=data.get('description', ''),
         command_template=data.get('command_template'),
         dependencies=data.get('dependencies', {}),

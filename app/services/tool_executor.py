@@ -2,12 +2,81 @@ import subprocess
 import logging
 import time
 import os
+import threading
+import signal
 from app.extensions import db
 import app.extensions as extensions
 from app.models.task import TaskLog, Task
 from app.models.tool import Tool
 
 logger = logging.getLogger(__name__)
+
+# 全局字典：跟踪活跃任务
+_active_tasks = {}
+
+
+class _OutputReader:
+    """非阻塞输出读取器：使用线程异步读取 stdout/stderr"""
+
+    def __init__(self, pipe, source: str, task_id: str, output_file, push_log_fn, update_progress_fn):
+        self.pipe = pipe
+        self.source = source
+        self.task_id = task_id
+        self.output_file = output_file
+        self.push_log = push_log_fn
+        self.update_progress = update_progress_fn
+        self.lines = []
+        self._thread = None
+        self._stop_event = threading.Event()
+        self.last_output_time = time.time()  # 记录最后输出时间
+
+    def start(self):
+        self._thread = threading.Thread(target=self._read_loop, daemon=True)
+        self._thread.start()
+
+    def _read_loop(self):
+        """后台线程：逐行读取输出"""
+        try:
+            for line in iter(self.pipe.readline, ''):
+                if self._stop_event.is_set():
+                    break
+                line = line.rstrip('\n')
+                if line:
+                    self.last_output_time = time.time()  # 更新最后输出时间
+                    self.lines.append(line)
+                    if self.output_file:
+                        self.output_file.write(line + '\n')
+                        self.output_file.flush()
+                    self.push_log(self.task_id, line, self.source)
+                    self.update_progress(self.task_id, None)
+        except Exception as e:
+            logger.error(f"Output reader error [{self.source}]: {e}")
+            self.push_log(self.task_id, f"[Reader Error] {e}", 'stderr')
+
+    def stop(self):
+        """停止读取线程"""
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=5)
+
+    def drain_remaining(self):
+        """读取剩余输出"""
+        try:
+            remaining = self.pipe.read()
+            if remaining:
+                for line in remaining.strip().split('\n'):
+                    if line:
+                        self.lines.append(line)
+                        if self.output_file:
+                            self.output_file.write(line + '\n')
+                            self.output_file.flush()
+                        self.push_log(self.task_id, line, self.source)
+        except Exception:
+            pass
+
+    def get_idle_seconds(self):
+        """获取空闲时间（秒）"""
+        return time.time() - self.last_output_time
 
 class ToolExecutor:
     def run(self, task_id: str, tool_name: str, target: str, params: dict) -> dict:
@@ -46,7 +115,7 @@ class ToolExecutor:
                 logger.warning(f"⚠️ Tool '{tool_name}' is marked as unavailable. Attempting execution anyway...")
 
             # 2. 过滤无效参数，保留执行参数
-            meta_params = {'async', 'priority', 'timeout', 'use_recovery'}
+            meta_params = {'async', 'priority', 'use_recovery'}
             valid_params = {k: v for k, v in params.items() if k not in meta_params}
 
             # 3. 构建命令 (安全拼接，兼容短参数如 -e, -t, -sV)
@@ -360,34 +429,96 @@ class ToolExecutor:
             logger.info(f"Executing: {cmd} [Task: {task_id}] [Params: {valid_params}]")
 
             output_path = f"/tmp/{task_id}.log"
+            stdout_reader = None
+            stderr_reader = None
+            process = None
+
             try:
-                process = subprocess.Popen(
-                    cmd,
-                    shell=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
-                )
+                # 创建进程组，便于后续清理子进程
+                if os.name == 'nt':  # Windows
+                    creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+                    process = subprocess.Popen(
+                        cmd,
+                        shell=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        creationflags=creationflags
+                    )
+                else:  # Linux/macOS
+                    process = subprocess.Popen(
+                        cmd,
+                        shell=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        preexec_fn=os.setsid
+                    )
 
-                # 打开输出文件，保存扫描结果
+                start_time = time.time()
+                check_interval = 2  # 每2秒检查一次进程状态
+                idle_timeout = int(os.environ.get("IDLE_TIMEOUT", 300))  # 空闲超时：5分钟无输出则终止
+
+                # 注册活跃任务，支持手动取消
+                _active_tasks[task_id] = {
+                    'process': process,
+                    'stdout_reader': None,
+                    'stderr_reader': None,
+                    'start_time': start_time
+                }
+
+                # 打开输出文件
                 with open(output_path, 'w', encoding='utf-8') as out_file:
+                    # 启动非阻塞读取器
+                    stdout_reader = _OutputReader(
+                        process.stdout, 'stdout', task_id, out_file,
+                        self._push_log, self._update_progress
+                    )
+                    stderr_reader = _OutputReader(
+                        process.stderr, 'stderr', task_id, out_file,
+                        self._push_log, self._update_progress
+                    )
+                    stdout_reader.start()
+                    stderr_reader.start()
+
+                    # 更新活跃任务信息
+                    _active_tasks[task_id]['stdout_reader'] = stdout_reader
+                    _active_tasks[task_id]['stderr_reader'] = stderr_reader
+
+                    # 主循环：监控进程状态（空闲超时机制）
                     while True:
-                        output = process.stdout.readline()
-                        if output == '' and process.poll() is not None:
+                        # 检查进程是否退出
+                        exit_code = process.poll()
+                        if exit_code is not None:
+                            # 进程已退出，等待读取器完成
+                            logger.info(f"Process exited with code {exit_code} for task {task_id}")
                             break
-                        if output:
-                            out_file.write(output)
-                            out_file.flush()
-                            self._push_log(task_id, output.strip(), 'stdout')
-                            self._update_progress(task_id, process)
 
-                    # 读取 stderr
-                    stderr_output = process.stderr.read()
-                    if stderr_output:
-                        out_file.write(f"\n--- STDERR ---\n{stderr_output}\n")
-                        self._push_log(task_id, stderr_output, 'stderr')
+                        # 检查空闲超时（如果两个读取器都超过空闲时间没有输出）
+                        stdout_idle = stdout_reader.get_idle_seconds()
+                        stderr_idle = stderr_reader.get_idle_seconds()
+                        if stdout_idle > idle_timeout and stderr_idle > idle_timeout:
+                            logger.warning(f"⏸️ Task {task_id} idle timeout after {stdout_idle:.0f}s (limit: {idle_timeout}s)")
+                            self._push_log(task_id, f"⏸️ Task idle timeout - no output for {stdout_idle:.0f}s", 'system')
+                            self._terminate_process(process, task_id)
+                            exit_code = process.poll()
+                            break
 
-                exit_code = process.poll()
+                        # 定期更新进度
+                        self._update_progress(task_id, process)
+                        time.sleep(check_interval)
+
+                    # 停止读取器并读取剩余输出
+                    if stdout_reader:
+                        stdout_reader.stop()
+                        stdout_reader.drain_remaining()
+                    if stderr_reader:
+                        stderr_reader.stop()
+                        stderr_reader.drain_remaining()
+
+                # 最终退出码
+                if exit_code is None:
+                    exit_code = process.returncode
 
                 if exit_code == 0:
                     return {"success": True, "output_path": output_path}
@@ -395,8 +526,77 @@ class ToolExecutor:
                     return {"success": False, "error": f"Exit code {exit_code}", "output_path": output_path}
 
             except Exception as e:
+                logger.error(f"Execution error for task {task_id}: {e}")
                 self._push_log(task_id, f"Execution error: {str(e)}", 'stderr')
+                # 确保清理进程
+                if process and process.poll() is None:
+                    self._terminate_process(process, task_id)
                 return {"success": False, "error": str(e)}
+            finally:
+                # 确保读取器被清理
+                if stdout_reader:
+                    stdout_reader.stop()
+                if stderr_reader:
+                    stderr_reader.stop()
+                if process and process.poll() is None:
+                    try:
+                        process.kill()
+                    except Exception:
+                        pass
+                # 从活跃任务中移除
+                _active_tasks.pop(task_id, None)
+
+    def cancel_task(self, task_id: str) -> bool:
+        """手动取消任务"""
+        if task_id not in _active_tasks:
+            return False
+        
+        task_info = _active_tasks[task_id]
+        process = task_info.get('process')
+        
+        if process and process.poll() is None:
+            logger.info(f"🛑 Cancelling task {task_id}")
+            self._push_log(task_id, "🛑 Task cancelled by user", 'system')
+            self._terminate_process(process, task_id)
+            return True
+        return False
+
+    @staticmethod
+    def get_active_tasks():
+        """获取所有活跃任务"""
+        return {
+            task_id: {
+                'pid': info['process'].pid if info['process'] else None,
+                'start_time': info['start_time'],
+                'elapsed': time.time() - info['start_time']
+            }
+            for task_id, info in _active_tasks.items()
+        }
+
+    def _terminate_process(self, process, task_id: str):
+        """终止进程及其子进程"""
+        try:
+            if os.name == 'nt':  # Windows
+                process.terminate()
+            else:  # Linux/macOS - 终止整个进程组
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                # 等待一下，如果还没退出则强制 kill
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        pass
+        except Exception as e:
+            logger.error(f"Failed to terminate process for task {task_id}: {e}")
+            try:
+                process.kill()
+            except Exception:
+                pass
 
     def _push_log(self, task_id: str, message: str, source: str):
         """推送日志到 MySQL 和 Redis"""

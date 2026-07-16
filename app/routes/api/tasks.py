@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from app.services.task_manager import task_manager, cleanup_stuck_tasks
+from app.services.tool_executor import ToolExecutor
 from app.extensions import db
 from app.models.task import Task, TaskStatus
 
@@ -131,3 +132,38 @@ def cleanup_stuck():
         })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+@bp.route('/<task_id>/cancel', methods=['POST'])
+def cancel_task(task_id):
+    """取消运行中的任务"""
+    try:
+        # 更新数据库状态
+        task = db.session.get(Task, task_id)
+        if not task:
+            return jsonify({"error": "Task not found"}), 404
+        
+        if task.status != TaskStatus.RUNNING:
+            return jsonify({"error": f"Task is not running (status: {task.status.value})"}), 400
+        
+        # 调用执行器取消
+        executor = ToolExecutor()
+        success = executor.cancel_task(task_id)
+        
+        if success:
+            task.status = TaskStatus.CANCELLED
+            task.completed_at = db.func.now()
+            db.session.commit()
+            return jsonify({"success": True, "message": "Task cancelled"})
+        else:
+            return jsonify({"error": "Failed to cancel task"}), 500
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@bp.route('/active', methods=['GET'])
+def get_active_tasks():
+    """获取所有活跃任务"""
+    try:
+        active = ToolExecutor.get_active_tasks()
+        return jsonify({"active_tasks": active})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
