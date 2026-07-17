@@ -3,6 +3,7 @@ from app.config import get_config
 from app.extensions import init_extensions
 from app.routes import register_blueprints
 from app.services.tool_registry import ToolRegistry
+from app.services.log_service import start_consumer as start_log_consumer
 import logging
 
 def create_app():
@@ -24,11 +25,14 @@ def create_app():
     # 启动自动健康检测
     with app.app_context():
         ToolRegistry.start_auto_health_check()
+        
+        # 启动日志消费者线程
+        start_log_consumer()
 
-    # 注册根路径路由 (MCP客户端连接测试等)
+    # 注册根路径路由 (MCP 客户端连接测试等)
     @app.route('/health', methods=['GET'])
     def health_check():
-        """MCP客户端健康检查端点"""
+        """MCP 客户端健康检查端点"""
         from datetime import datetime
         import app.extensions as extensions
         return jsonify({

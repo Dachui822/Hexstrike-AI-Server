@@ -4,10 +4,13 @@ import time
 import os
 import threading
 import signal
+import json
+from datetime import datetime
 from app.extensions import db
 import app.extensions as extensions
 from app.models.task import TaskLog, Task
 from app.models.tool import Tool
+from app.services.log_service import push_log as push_log_async
 
 logger = logging.getLogger(__name__)
 
@@ -587,18 +590,9 @@ class ToolExecutor:
         self._static_terminate_process(process, task_id)
 
     def _push_log(self, task_id: str, message: str, source: str):
-        """推送日志到 MySQL 和 Redis"""
-        if extensions.redis_client:
-            try:
-                extensions.redis_client.lpush(f"task:{task_id}:logs", message)
-                extensions.redis_client.publish("hexstrike:logs", f"{task_id}|{message}")
-                logger.info(f"[LOG] Pushed log for task {task_id}: {message[:80]}...")
-            except Exception as e:
-                logger.error(f"Failed to push log to Redis: {e}")
-
-        log_entry = TaskLog(task_id=task_id, message=message, source=source, level='INFO')
-        db.session.add(log_entry)
-        db.session.commit()
+        """推送日志到队列（异步批量写入）"""
+        # 使用异步日志队列（非阻塞）
+        push_log_async(task_id, message, source)
 
     def _update_progress(self, task_id: str, process):
         """更新进度 (模拟)"""

@@ -8,7 +8,7 @@ bp = Blueprint('monitor', __name__)
 
 @bp.route('/health', methods=['GET'])
 def health_check():
-    """MCP客户端健康检查端点"""
+    """MCP 客户端健康检查端点"""
     return jsonify({
         "status": "healthy",
         "service": "HexStrike AI Backend",
@@ -35,7 +35,13 @@ def stream_logs(task_id):
         for msg in history:
             # 解码 bytes 为 string
             msg_str = msg.decode('utf-8') if isinstance(msg, bytes) else msg
-            yield f"data: {json.dumps({'task_id': task_id, 'message': msg_str})}\n\n"
+            try:
+                # 尝试解析 JSON（新格式）
+                log_data = json.loads(msg_str)
+                yield f"data: {json.dumps({'task_id': task_id, **log_data})}\n\n"
+            except json.JSONDecodeError:
+                # 兼容旧格式（纯文本）
+                yield f"data: {json.dumps({'task_id': task_id, 'message': msg_str, 'timestamp': None})}\n\n"
 
         # 监听实时日志（从 Redis Pub/Sub）
         for message in pubsub.listen():
@@ -43,6 +49,12 @@ def stream_logs(task_id):
                 data = message['data'].decode('utf-8') if isinstance(message['data'], bytes) else message['data']
                 parts = data.split('|', 1)
                 if len(parts) == 2 and parts[0] == task_id:
-                    yield f"data: {json.dumps({'task_id': task_id, 'message': parts[1]})}\n\n"
+                    try:
+                        # 尝试解析 JSON（新格式）
+                        log_data = json.loads(parts[1])
+                        yield f"data: {json.dumps({'task_id': task_id, **log_data})}\n\n"
+                    except json.JSONDecodeError:
+                        # 兼容旧格式（纯文本）
+                        yield f"data: {json.dumps({'task_id': task_id, 'message': parts[1], 'timestamp': None})}\n\n"
 
     return Response(stream_with_context(generate()), mimetype='text/event-stream')
