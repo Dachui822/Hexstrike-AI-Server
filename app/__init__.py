@@ -25,9 +25,9 @@ def create_app():
     # 启动自动健康检测
     with app.app_context():
         ToolRegistry.start_auto_health_check()
-        
-        # 启动日志消费者线程
-        start_log_consumer()
+
+    # 启动日志消费者线程（在应用上下文外）
+    start_log_consumer()
 
     # 注册根路径路由 (MCP 客户端连接测试等)
     @app.route('/health', methods=['GET'])
