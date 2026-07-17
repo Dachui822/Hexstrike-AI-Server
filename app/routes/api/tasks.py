@@ -170,7 +170,18 @@ def cancel_task(task_id):
 def get_active_tasks():
     """获取所有活跃任务"""
     try:
+        from app.services.tool_executor import ToolExecutor
         active = ToolExecutor.get_active_tasks()
         return jsonify({"active_tasks": active})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@bp.route('/log-queue/stats', methods=['GET'])
+def get_log_queue_stats():
+    """获取日志队列统计信息"""
+    try:
+        from app.services.log_service import get_queue_stats
+        stats = get_queue_stats()
+        return jsonify(stats)
     except Exception as e:
         return jsonify({"error": str(e)}), 500

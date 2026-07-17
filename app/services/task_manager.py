@@ -170,6 +170,10 @@ class TaskManager:
                         db.session.commit()
                 except: pass
             finally:
+                # 清理日志队列（多任务并发支持）
+                from app.services.log_service import cleanup_task
+                cleanup_task(task_id)
+                
                 # 释放 Redis 锁和全局计数
                 if extensions.redis_client:
                     extensions.redis_client.delete(f"task:{task_id}:lock")
