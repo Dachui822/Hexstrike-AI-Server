@@ -111,10 +111,10 @@ def _flush_batch(task_id: str, batch):
         return
 
     try:
-        # 每次写入创建独立的应用上下文（线程安全）
-        from app import create_app
-        app = create_app()
-        
+        # 复用主应用上下文，避免重复创建连接池
+        from flask import current_app
+        app = current_app._get_current_object()
+
         with app.app_context():
             entries = [
                 TaskLog(

@@ -39,7 +39,7 @@ def list_tasks():
         "pages": pagination.pages,
         "tasks": [{
             "id": t.id, "tool": t.tool_name, "target": t.target,
-            "status": t.status.value.lower() if t.status else "unknown", "progress": t.progress,
+            "status": t.status.value.lower() if t.status else "unknown",
             "created_at": t.created_at.isoformat()
         } for t in pagination.items]
     })
@@ -55,7 +55,6 @@ def get_task(task_id):
         "tool": task.tool_name,
         "target": task.target,
         "status": task.status.value.lower() if task.status else "unknown",
-        "progress": task.progress,
         "params": task.params,
         "error": task.error_message,
         "created_at": task.created_at.isoformat(),

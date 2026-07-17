@@ -121,7 +121,6 @@ def mcp_handler():
                     "tool_version": tool_version,
                     "target": task.target,
                     "status": status_val,
-                    "progress": task.progress,
                     "created_at": task.created_at.isoformat() if task.created_at else None,
                     "completed_at": task.completed_at.isoformat() if task.completed_at else None,
                 }
@@ -137,7 +136,7 @@ def mcp_handler():
                     result["message"] = f"Task failed. Here are the execution logs for debugging: {task.error_message or ''}"
                 else:
                     # 任务运行中
-                    result["message"] = f"Task is {status_val}. Progress: {task.progress}%"
+                    result["message"] = f"Task is {status_val}."
 
                 return jsonify({
                     "jsonrpc": "2.0", "id": req_id,

@@ -126,8 +126,8 @@ class TaskManager:
 
     def _run_task(self, task_id: str):
         """实际执行任务（在线程池中运行）"""
-        from app import create_app
-        app = create_app()
+        from flask import current_app
+        app = current_app._get_current_object()
 
         with app.app_context():
             try:
@@ -150,7 +150,6 @@ class TaskManager:
                 task = db.session.get(Task, task_id)
                 if result.get("success"):
                     task.status = TaskStatus.SUCCESS
-                    task.progress = 100.0
                     task.output_path = result.get("output_path")
                 else:
                     task.status = TaskStatus.FAILED
@@ -196,8 +195,8 @@ class TaskManager:
 
     def delete_task(self, task_id: str) -> bool:
         """删除任务"""
-        from app import create_app
-        app = create_app()
+        from flask import current_app
+        app = current_app._get_current_object()
 
         with app.app_context():
             task = db.session.get(Task, task_id)
@@ -228,8 +227,8 @@ class TaskManager:
 
     def update_task(self, task_id: str, params: dict) -> bool:
         """更新任务参数（仅支持 PENDING 状态）"""
-        from app import create_app
-        app = create_app()
+        from flask import current_app
+        app = current_app._get_current_object()
 
         with app.app_context():
             task = db.session.get(Task, task_id)
@@ -254,9 +253,9 @@ task_manager = TaskManager()
 def cleanup_stuck_tasks():
     """清理卡住的任务（用于手动执行）"""
     from datetime import datetime, timedelta
-    from app import create_app
-    
-    app = create_app()
+    from flask import current_app
+
+    app = current_app._get_current_object()
     with app.app_context():
         one_hour_ago = datetime.now() - timedelta(hours=1)
         stuck_tasks = Task.query.filter(

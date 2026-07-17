@@ -19,7 +19,6 @@ class Task(db.Model):
     target = db.Column(String(255), nullable=False)
     params = db.Column(db.JSON, nullable=True)
     status = db.Column(SQLEnum(TaskStatus), default=TaskStatus.PENDING, index=True)
-    progress = db.Column(Float, default=0.0)
     priority = db.Column(Integer, default=0)
     worker_id = db.Column(String(64), nullable=True)
     mcp_request_id = db.Column(String(64), nullable=True, index=True)

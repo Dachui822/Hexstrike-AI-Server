@@ -19,13 +19,12 @@ logger = logging.getLogger(__name__)
 class _OutputReader:
     """非阻塞输出读取器：使用线程异步读取 stdout/stderr"""
 
-    def __init__(self, pipe, source: str, task_id: str, output_file, push_log_fn, update_progress_fn):
+    def __init__(self, pipe, source: str, task_id: str, output_file, push_log_fn):
         self.pipe = pipe
         self.source = source
         self.task_id = task_id
         self.output_file = output_file
         self.push_log = push_log_fn
-        self.update_progress = update_progress_fn
         self.lines = []
         self._thread = None
         self._stop_event = threading.Event()
@@ -49,7 +48,6 @@ class _OutputReader:
                         self.output_file.write(line + '\n')
                         self.output_file.flush()
                     self.push_log(self.task_id, line, self.source)
-                    self.update_progress(self.task_id, None)
         except Exception as e:
             logger.error(f"Output reader error [{self.source}]: {e}")
             self.push_log(self.task_id, f"[Reader Error] {e}", 'stderr')
@@ -82,8 +80,9 @@ class _OutputReader:
 class ToolExecutor:
     def run(self, task_id: str, tool_name: str, target: str, params: dict) -> dict:
         """执行工具命令"""
-        from app import create_app
-        app = create_app()
+        from flask import current_app
+        app = current_app._get_current_object()
+        
         with app.app_context():
             # 兼容处理：MCP 客户端可能传递 url/domain/hash 等参数名而非 target
             # 如果 target 为空，尝试从 params 中获取
@@ -465,11 +464,11 @@ class ToolExecutor:
                     # 启动非阻塞读取器
                     stdout_reader = _OutputReader(
                         process.stdout, 'stdout', task_id, out_file,
-                        self._push_log, self._update_progress
+                        self._push_log
                     )
                     stderr_reader = _OutputReader(
                         process.stderr, 'stderr', task_id, out_file,
-                        self._push_log, self._update_progress
+                        self._push_log
                     )
                     stdout_reader.start()
                     stderr_reader.start()
@@ -508,8 +507,7 @@ class ToolExecutor:
                             exit_code = process.poll()
                             break
 
-                        # 定期更新进度
-                        self._update_progress(task_id, process)
+                        # 定期更新进度 (已移除)
                         time.sleep(check_interval)
 
                     # 停止读取器并读取剩余输出
@@ -593,10 +591,3 @@ class ToolExecutor:
         """推送日志到队列（异步批量写入）"""
         # 使用异步日志队列（非阻塞）
         push_log_async(task_id, message, source)
-
-    def _update_progress(self, task_id: str, process):
-        """更新进度 (模拟)"""
-        current = int(time.time() % 100)
-        if extensions.redis_client:
-            extensions.redis_client.hset(f"task:{task_id}", mapping={"progress": str(current)})
-            extensions.redis_client.publish("hexstrike:progress", f"{task_id}|{current}")
