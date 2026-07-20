@@ -48,23 +48,29 @@ class TaskManager:
         self._scheduler_thread = None
         self._leader_watchdog_thread = None
 
-        # 固化 Flask 应用实例，解决后台线程上下文缺失问题
-        try:
-            from flask import current_app
-            self.app = current_app._get_current_object()
-            logger.info("✅ Flask app instance captured for TaskManager")
-        except RuntimeError:
-            self.app = None
-            logger.warning("⚠️ Failed to capture Flask app instance during init")
+        # Flask 应用实例，由 create_app 显式注入
+        self.app = None
 
-        # 注册 Lua 脚本
+        # Lua 脚本将在 init_app 时注册
+        self._acquire_script = None
+        self._release_script = None
+
+    def init_app(self, app):
+        """显式注入 Flask 应用实例并启动调度器（确保 Redis 已就绪）"""
+        self.app = app
+        logger.info("✅ Flask app instance injected into TaskManager")
+        
+        # 注册 Lua 脚本（此时 Redis 应该已初始化）
         if extensions.redis_client:
             try:
                 self._acquire_script = extensions.redis_client.register_script(LUA_ACQUIRE)
                 self._release_script = extensions.redis_client.register_script(LUA_RELEASE)
+                logger.info("✅ Lua scripts registered")
             except Exception as e:
-                logger.error(f"Failed to register Lua scripts in init: {e}")
-
+                logger.error(f"Failed to register Lua scripts: {e}")
+        else:
+            logger.error("❌ Redis client not available, scheduler will not work")
+        
         # 启动后台调度器（带 Leader 选举）
         self._start_scheduler()
 
@@ -73,14 +79,18 @@ class TaskManager:
         if self._scheduler_running:
             return
 
+        # 检查 Redis 是否可用
+        if not extensions.redis_client:
+            logger.error("❌ Cannot start scheduler: Redis client not available")
+            return
+
         # 尝试获取 Leader 锁
-        if extensions.redis_client:
-            acquired = extensions.redis_client.set(
-                SCHEDULER_LEADER_KEY, "1", nx=True, ex=SCHEDULER_LEADER_TTL
-            )
-            if not acquired:
-                logger.info("🔒 Scheduler leader already elected, skipping startup")
-                return
+        acquired = extensions.redis_client.set(
+            SCHEDULER_LEADER_KEY, "1", nx=True, ex=SCHEDULER_LEADER_TTL
+        )
+        if not acquired:
+            logger.info("🔒 Scheduler leader already elected, skipping startup")
+            return
 
         self._scheduler_running = True
         self._scheduler_thread = threading.Thread(target=self._scheduler_loop, daemon=True)
@@ -157,17 +167,6 @@ class TaskManager:
                 if not extensions.redis_client:
                     time.sleep(5)
                     continue
-
-                # 动态注册 Lua 脚本（防御性编程：处理 __init__ 中 Redis 未就绪的情况）
-                if not hasattr(self, '_acquire_script') or not hasattr(self, '_release_script'):
-                    try:
-                        self._acquire_script = extensions.redis_client.register_script(LUA_ACQUIRE)
-                        self._release_script = extensions.redis_client.register_script(LUA_RELEASE)
-                        logger.info("✅ Lua scripts registered dynamically in scheduler")
-                    except Exception as e:
-                        logger.error(f"Failed to register Lua scripts: {e}")
-                        time.sleep(5)
-                        continue
 
                 # 🔍 定期补偿：修复 MySQL PENDING 但 Redis 缺失的任务
                 now = time.time()
