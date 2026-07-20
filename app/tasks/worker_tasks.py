@@ -20,10 +20,6 @@ from celery.exceptions import SoftTimeLimitExceeded, TimeLimitExceeded
 # 导入项目模块
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-from app.extensions import db
-from app.models.task import Task, TaskStatus, TaskLog
-from app.models.tool import Tool
-
 logger = logging.getLogger(__name__)
 
 # ============================================================================
@@ -221,26 +217,53 @@ def execute_tool_task(
     Returns:
         执行结果字典
     """
-    from flask import current_app
-    
     logger.info(f" Starting task {task_id}: {tool_name} on {target}")
     
+    # 创建 Flask 应用上下文（Celery Worker 中没有默认的上下文）
+    from app import create_app
+    from app.extensions import db as app_db
+    from app.models.task import Task, TaskStatus, TaskLog
+    app = create_app()
+    
+    with app.app_context():
+        return _execute_task_impl(
+            self, task_id, tool_name, target, params,
+            app_db, Task, TaskStatus, TaskLog
+        )
+
+
+def _execute_task_impl(
+    self,
+    task_id: str,
+    tool_name: str,
+    target: str,
+    params: Dict[str, Any],
+    db,
+    Task,
+    TaskStatus,
+    TaskLog
+) -> Dict[str, Any]:
+    """
+    实际执行任务的实现函数（在 Flask 应用上下文中运行）
+    """
+    logger.info(f" Inside task context for {task_id}")
+
     # 更新任务状态为 RUNNING
     try:
         task = Task.query.get(task_id)
         if not task:
             return {"success": False, "error": f"Task {task_id} not found"}
-        
+
         task.status = TaskStatus.RUNNING
         task.started_at = datetime.now()
         db.session.commit()
-        logger.info(f"📝 Task {task_id} status updated to RUNNING")
-        
+        logger.info(f" Task {task_id} status updated to RUNNING")
+
     except Exception as e:
         logger.error(f"Failed to update task status: {e}")
         db.session.rollback()
         raise
-    
+
     # 构建安全命令
     try:
         cmd = SecureCommandExecutor.build_command(tool_name, target, params)
@@ -251,11 +274,11 @@ def execute_tool_task(
     except Exception as e:
         logger.error(f"❌ Failed to build command: {e}")
         return {"success": False, "error": f"Command build error: {e}"}
-    
+
     # 执行命令
     process = None
     output_path = f"/tmp/{task_id}.log"
-    
+
     try:
         # 启动进程
         process = subprocess.Popen(
@@ -266,21 +289,21 @@ def execute_tool_task(
             bufsize=1,
             preexec_fn=os.setsid if os.name != 'nt' else None
         )
-        
+
         logger.info(f" Process {process.pid} started for task {task_id}")
-        
+
         # 读取输出
         output_lines = []
         start_time = time.time()
         last_output_time = start_time
         idle_timeout = int(os.environ.get("IDLE_TIMEOUT", 300))
-        
+
         while True:
             # 检查进程是否结束
             exit_code = process.poll()
             if exit_code is not None:
                 break
-            
+
             # 读取 stdout
             try:
                 line = process.stdout.readline()
@@ -295,7 +318,7 @@ def execute_tool_task(
                         logger.warning(f"Failed to push log: {log_err}")
             except Exception as read_err:
                 logger.warning(f"Read error: {read_err}")
-            
+
             # 检查空闲超时
             if time.time() - last_output_time > idle_timeout:
                 logger.warning(f" Task {task_id} idle timeout ({idle_timeout}s)")
@@ -305,52 +328,78 @@ def execute_tool_task(
                     "error": f"Idle timeout after {idle_timeout}s",
                     "output_path": output_path
                 }
-            
+
             # 检查是否被撤销
-            if self.request.id and Task.query.get(task_id):
-                task = Task.query.get(task_id)
-                if task.status == TaskStatus.CANCELLED:
-                    logger.info(f"🛑 Task {task_id} cancelled")
-                    process.kill()
-                    return {"success": False, "error": "Task cancelled by user"}
-            
+            task = Task.query.get(task_id)
+            if task and task.status == TaskStatus.CANCELLED:
+                logger.info(f"🛑 Task {task_id} cancelled")
+                process.kill()
+                return {"success": False, "error": "Task cancelled by user"}
+
             time.sleep(1)
-        
+
         # 读取剩余输出
         remaining = process.stdout.read()
         if remaining:
             output_lines.extend(remaining.strip().split('\n'))
-        
+
         # 写入输出文件
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write('\n'.join(output_lines))
-        
+
         logger.info(f"✅ Task {task_id} completed with exit code {exit_code}")
-        
+
+        # 更新任务状态
+        task = Task.query.get(task_id)
+        if task:
+            if exit_code == 0:
+                task.status = TaskStatus.SUCCESS
+                task.output_path = output_path
+            else:
+                task.status = TaskStatus.FAILED
+                task.error_message = f"Exit code {exit_code}"
+                task.output_path = output_path
+            task.completed_at = datetime.now()
+            db.session.commit()
+
         return {
             "success": exit_code == 0,
             "output_path": output_path,
             "exit_code": exit_code
         }
-        
+
     except SoftTimeLimitExceeded:
         logger.error(f"⏰ Task {task_id} soft time limit exceeded")
         if process:
             process.kill()
+        # 更新任务状态
+        task = Task.query.get(task_id)
+        if task:
+            task.status = TaskStatus.FAILED
+            task.error_message = "Task time limit exceeded"
+            task.completed_at = datetime.now()
+            db.session.commit()
         return {"success": False, "error": "Task time limit exceeded"}
-        
+
     except TimeLimitExceeded:
         logger.error(f"🔥 Task {task_id} hard time limit exceeded")
         return {"success": False, "error": "Task hard time limit exceeded"}
-        
+
     except Exception as e:
         logger.error(f"❌ Task {task_id} execution error: {e}", exc_info=True)
-        if process and process.poll() is None:
+        if process:
             process.kill()
+        # 更新任务状态
+        task = Task.query.get(task_id)
+        if task:
+            task.status = TaskStatus.FAILED
+            task.error_message = str(e)
+            task.completed_at = datetime.now()
+            db.session.commit()
         return {"success": False, "error": str(e)}
-        
+
     finally:
-        # 清理
+        # 清理进程
         if process:
             try:
                 process.wait(timeout=5)
