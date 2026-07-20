@@ -88,40 +88,40 @@ def update_task(task_id):
 
 @bp.route('/config', methods=['GET'])
 def get_config():
-    """获取任务调度配置"""
+    """获取任务调度配置（Celery 架构）"""
     import app.extensions as extensions
+    import os
+
+    # Celery 架构中，并发数由 WORKER_CONCURRENCY 环境变量控制
+    max_workers = int(os.environ.get("WORKER_CONCURRENCY", 10))
     
-    max_workers = task_manager.max_workers
-    if extensions.redis_client:
-        try:
-            val = extensions.redis_client.get('app:config:max_workers')
-            if val:
-                max_workers = int(val)
-                task_manager.max_workers = max_workers
-        except Exception:
-            pass
-            
     # 从数据库统计全局运行中任务数（跨 Worker 准确）
     running_count = Task.query.filter(Task.status == TaskStatus.RUNNING).count()
-            
+
     return jsonify({
         "max_workers": max_workers,
-        "running_tasks": running_count
+        "running_tasks": running_count,
+        "architecture": "celery",
+        "note": "Concurrency is controlled by WORKER_CONCURRENCY environment variable"
     })
 
 @bp.route('/config', methods=['PUT'])
 def update_config():
-    """更新任务调度配置"""
+    """更新任务调度配置（Celery 架构）"""
     data = request.json
     new_limit = data.get('max_workers')
 
     if new_limit is None or not isinstance(new_limit, int) or new_limit < 1:
         return jsonify({"error": "Invalid max_workers value"}), 400
 
-    task_manager.update_max_workers(new_limit)
+    # Celery 架构中，需要重启 Worker 才能生效
+    # 这里仅返回提示信息
     return jsonify({
         "success": True,
-        "max_workers": task_manager.max_workers
+        "max_workers": new_limit,
+        "architecture": "celery",
+        "note": "To apply this change, restart the Celery Worker with the new WORKER_CONCURRENCY environment variable",
+        "command": "export WORKER_CONCURRENCY={new_limit} && sudo systemctl restart hexstrike-worker"
     })
 
 @bp.route('/cleanup', methods=['POST'])
