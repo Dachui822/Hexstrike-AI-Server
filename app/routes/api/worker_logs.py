@@ -6,13 +6,17 @@ Celery Worker 日志 API 端点
 from flask import Blueprint, request, jsonify, Response
 import os
 import json
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
 bp = Blueprint('worker_logs', __name__)
 
-# Worker 日志文件路径
-WORKER_LOG_FILE = os.environ.get('WORKER_LOG_FILE', '/tmp/hexstrike_worker.log')
+# Worker 日志文件路径（支持多个位置）
+WORKER_LOG_FILES = [
+    os.environ.get('WORKER_LOG_FILE', '/var/log/hexstrike_ai/hexstrike_worker_service.log'),
+    '/var/log/hexstrike_ai/hexstrike_worker_error.log',
+]
 
 
 @bp.route('/worker', methods=['GET'])
@@ -23,41 +27,59 @@ def get_worker_logs():
     is_incremental = since_line > 0
     
     try:
-        log_file = Path(WORKER_LOG_FILE)
+        # 优先尝试从 systemd journal 获取日志
+        try:
+            result = subprocess.run(
+                ['journalctl', '-u', 'hexstrike-worker', '-n', str(limit), '--no-pager', '-o', 'cat'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                logs = result.stdout.strip().split('\n')
+                return jsonify({
+                    "success": True,
+                    "logs": logs,
+                    "total_lines": len(logs),
+                    "is_incremental": is_incremental,
+                    "source": "systemd-journal"
+                })
+        except Exception as journal_err:
+            pass  # journal 失败则尝试文件
         
-        # 如果日志文件不存在，返回空
-        if not log_file.exists():
-            return jsonify({
-                "success": True,
-                "logs": [],
-                "total_lines": 0,
-                "is_incremental": is_incremental,
-                "message": "Worker log file not found"
-            })
+        # 从文件读取
+        for log_file_path in WORKER_LOG_FILES:
+            log_file = Path(log_file_path)
+            if log_file.exists():
+                with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    all_lines = f.readlines()
+                
+                total_lines = len(all_lines)
+                
+                if is_incremental:
+                    start_line = min(since_line, total_lines)
+                    new_lines = all_lines[start_line:]
+                else:
+                    start_line = max(0, total_lines - limit)
+                    new_lines = all_lines[start_line:]
+                
+                logs = [line.rstrip('\n') for line in new_lines]
+                
+                return jsonify({
+                    "success": True,
+                    "logs": logs,
+                    "total_lines": total_lines,
+                    "is_incremental": is_incremental,
+                    "source": f"file:{log_file_path}"
+                })
         
-        # 读取日志文件
-        with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
-            all_lines = f.readlines()
-        
-        total_lines = len(all_lines)
-        
-        # 增量获取：只返回新增的行
-        if is_incremental:
-            start_line = min(since_line, total_lines)
-            new_lines = all_lines[start_line:]
-        else:
-            # 全量获取：返回最新的 limit 行
-            start_line = max(0, total_lines - limit)
-            new_lines = all_lines[start_line:]
-        
-        # 清理日志行（移除多余换行符）
-        logs = [line.rstrip('\n') for line in new_lines]
-        
+        # 所有源都无日志
         return jsonify({
             "success": True,
-            "logs": logs,
-            "total_lines": total_lines,
-            "is_incremental": is_incremental
+            "logs": [],
+            "total_lines": 0,
+            "is_incremental": is_incremental,
+            "message": "No worker logs found"
         })
         
     except Exception as e:
@@ -69,40 +91,50 @@ def get_worker_logs():
 
 @bp.route('/worker/stream', methods=['GET'])
 def stream_worker_logs():
-    """Server-Sent Events: 实时推送 Worker 日志"""
+    """Server-Sent Events: 实时推送 Worker 日志（从 systemd journal）"""
     def event_stream():
-        log_file = Path(WORKER_LOG_FILE)
         last_position = 0
         
         while True:
             try:
-                if not log_file.exists():
-                    # 文件不存在，等待
-                    yield f"data: {json.dumps({'type': 'wait', 'message': 'Waiting for log file...'})}\n\n"
-                    import time
-                    time.sleep(2)
-                    continue
+                # 使用 journalctl 跟踪新日志
+                result = subprocess.run(
+                    ['journalctl', '-u', 'hexstrike-worker', '-n', '10', '--no-pager', '-o', 'cat', '-f'],
+                    capture_output=True,
+                    text=True,
+                    timeout=3
+                )
                 
-                # 读取新日志
-                with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
-                    f.seek(last_position)
-                    new_lines = f.readlines()
-                    last_position = f.tell()
+                if result.stdout:
+                    new_lines = result.stdout.strip().split('\n')
+                    for line in new_lines:
+                        if line.strip():
+                            log_entry = parse_log_line(line)
+                            yield f"data: {json.dumps(log_entry)}\n\n"
                 
-                # 推送新日志
-                for line in new_lines:
-                    line = line.rstrip('\n')
-                    if line:
-                        # 解析日志级别
-                        log_entry = parse_log_line(line)
-                        yield f"data: {json.dumps(log_entry)}\n\n"
-                
-                # 等待 2 秒后继续
                 import time
                 time.sleep(2)
                 
             except Exception as e:
-                yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                # journalctl 失败则尝试文件轮询
+                try:
+                    for log_file_path in WORKER_LOG_FILES:
+                        log_file = Path(log_file_path)
+                        if log_file.exists():
+                            with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                                f.seek(last_position)
+                                new_lines = f.readlines()
+                                last_position = f.tell()
+                            
+                            for line in new_lines:
+                                line = line.rstrip('\n')
+                                if line:
+                                    log_entry = parse_log_line(line)
+                                    yield f"data: {json.dumps(log_entry)}\n\n"
+                            break
+                except Exception as file_err:
+                    pass
+                
                 import time
                 time.sleep(2)
     
@@ -111,7 +143,7 @@ def stream_worker_logs():
         mimetype='text/event-stream',
         headers={
             'Cache-Control': 'no-cache',
-            'X-Accel-Buffering': 'no'  # Nginx: 禁用缓冲
+            'X-Accel-Buffering': 'no'
         }
     )
 
@@ -120,9 +152,42 @@ def parse_log_line(line: str) -> dict:
     """解析日志行，提取时间、级别、消息"""
     import re
     
-    # 日志格式：[ HexStrike Worker] 2026-07-20 17:23:36 [INFO] logger: message
-    pattern = r'\[ HexStrike Worker\] (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[(\w+)\] ([^:]+): (.+)'
-    match = re.match(pattern, line)
+    # systemd journal 格式：Jul 20 17:23:36 hostname service[pid]: message
+    journal_pattern = r'(\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})\s+\S+\s+\S+\[(\d+)\]:\s+(.*)'
+    match = re.match(journal_pattern, line)
+    
+    if match:
+        timestamp_str = match.group(1)
+        message = match.group(3)
+        
+        # 添加年份
+        from datetime import datetime
+        try:
+            dt = datetime.strptime(f"2026 {timestamp_str}", "%Y %b %d %H:%M:%S")
+            timestamp = dt.isoformat()
+        except:
+            timestamp = datetime.now().isoformat()
+        
+        # 检测日志级别
+        level = "INFO"
+        if "ERROR" in message or "error" in message or "Failed" in message:
+            level = "ERROR"
+        elif "WARNING" in message or "warning" in message or "WARN" in message:
+            level = "WARNING"
+        elif "DEBUG" in message or "debug" in message:
+            level = "DEBUG"
+        
+        return {
+            "type": "log",
+            "timestamp": timestamp,
+            "level": level,
+            "logger": "celery.worker",
+            "message": message
+        }
+    
+    # 标准日志格式：[ HexStrike Worker] 2026-07-20 17:23:36 [INFO] logger: message
+    standard_pattern = r'\[ HexStrike Worker\] (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) \[(\w+)\] ([^:]+): (.+)'
+    match = re.match(standard_pattern, line)
     
     if match:
         return {
@@ -132,52 +197,62 @@ def parse_log_line(line: str) -> dict:
             "logger": match.group(3),
             "message": match.group(4)
         }
-    else:
-        return {
-            "type": "log",
-            "timestamp": datetime.now().isoformat(),
-            "level": "INFO",
-            "logger": "unknown",
-            "message": line
-        }
+    
+    # 无法解析的格式
+    return {
+        "type": "log",
+        "timestamp": datetime.now().isoformat(),
+        "level": "INFO",
+        "logger": "unknown",
+        "message": line
+    }
 
 
 @bp.route('/worker/stats', methods=['GET'])
 def get_worker_stats():
     """获取 Worker 统计信息"""
     try:
-        log_file = Path(WORKER_LOG_FILE)
+        # 尝试从 journalctl 获取统计
+        result = subprocess.run(
+            ['journalctl', '-u', 'hexstrike-worker', '--no-pager', '-o', 'cat'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
         
-        if not log_file.exists():
-            return jsonify({
-                "success": False,
-                "error": "Worker log file not found"
-            })
+        if result.returncode == 0 and result.stdout:
+            all_lines = result.stdout.strip().split('\n')
+        else:
+            # journal 失败则尝试文件
+            all_lines = []
+            for log_file_path in WORKER_LOG_FILES:
+                log_file = Path(log_file_path)
+                if log_file.exists():
+                    with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                        all_lines = f.readlines()
+                    break
         
         # 统计日志级别分布
         level_counts = {"INFO": 0, "ERROR": 0, "WARNING": 0, "DEBUG": 0}
         
-        with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
-            for line in f:
-                if '[ERROR]' in line:
-                    level_counts["ERROR"] += 1
-                elif '[WARNING]' in line:
-                    level_counts["WARNING"] += 1
-                elif '[DEBUG]' in line:
-                    level_counts["DEBUG"] += 1
-                elif '[INFO]' in line:
-                    level_counts["INFO"] += 1
+        for line in all_lines:
+            if '[ERROR]' in line or 'ERROR' in line or 'error' in line or 'Failed' in line:
+                level_counts["ERROR"] += 1
+            elif '[WARNING]' in line or 'WARNING' in line or 'WARN' in line:
+                level_counts["WARNING"] += 1
+            elif '[DEBUG]' in line or 'DEBUG' in line:
+                level_counts["DEBUG"] += 1
+            elif '[INFO]' in line or 'INFO' in line:
+                level_counts["INFO"] += 1
         
-        # 获取文件大小
-        file_size = log_file.stat().st_size
+        total_lines = sum(level_counts.values())
         
         return jsonify({
             "success": True,
             "stats": {
-                "total_lines": sum(level_counts.values()),
+                "total_lines": total_lines,
                 "level_counts": level_counts,
-                "file_size_bytes": file_size,
-                "file_size_mb": round(file_size / (1024 * 1024), 2)
+                "source": "systemd-journal" if result.returncode == 0 else "file"
             }
         })
         

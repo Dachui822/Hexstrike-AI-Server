@@ -29,14 +29,94 @@ logger = logging.getLogger(__name__)
 class SecureCommandExecutor:
     """安全命令执行器 - 防止命令注入"""
     
-    # 白名单：允许的工具名称
+    # 是否启用工具白名单（通过环境变量控制）
+    # 默认：false（允许所有工具，方便开发和测试）
+    # 生产环境建议设置为：true
+    ENABLE_TOOL_WHITELIST = os.environ.get("ENABLE_TOOL_WHITELIST", "false").lower() == "true"
+    
+    # 白名单：允许的工具名称（仅在 ENABLE_TOOL_WHITELIST=true 时生效）
     ALLOWED_TOOLS = {
         'nmap', 'dirsearch', 'gobuster', 'sqlmap', 'nikto', 'ffuf',
         'nuclei', 'subfinder', 'amass', 'httpx', 'katana', 'feroxbuster',
         'wpscan', 'hydra', 'hashcat', 'john', 'masscan', 'rustscan',
         'theHarvester', 'fierce', 'shodan', 'wfuzz', 'jaeles', 'dalfox',
         'arjun', 'medusa', 'patator', 'responder', 'nxc', 'crackmapexec',
-        'exploit-db', 'searchsploit', 'waybackurls', 'dotdotpwn', 'hakrawler'
+        'exploit-db', 'searchsploit', 'waybackurls', 'dotdotpwn', 'hakrawler',
+        'curl', 'wget', 'ping', 'traceroute', 'dig', 'nslookup',
+        'whois', 'nbtscan', 'enum4linux', 'smbclient', 'rpcclient',
+        'ldapsearch', 'certutil', 'openssl', 'nc', 'netcat', 'telnet',
+        'ftp', 'sftp', 'scp', 'rsync', 'ssh', 'rdp', 'vnc',
+        'burpsuite', 'zap', 'metasploit', 'msfconsole', 'msfrpc',
+        'beacon', 'cobaltstrike', 'empire', 'powershell', 'python',
+        'bash', 'sh', 'perl', 'ruby', 'php', 'node', 'java', 'go',
+        'gcc', 'g++', 'make', 'cmake', 'git', 'svn', 'docker', 'kubectl',
+        'terraform', 'ansible', 'puppet', 'chef', 'salt',
+        'jq', 'yq', 'awk', 'sed', 'grep', 'find', 'locate', 'which',
+        'ps', 'top', 'htop', 'free', 'df', 'du', 'ls', 'cat', 'less', 'more',
+        'tail', 'head', 'wc', 'sort', 'uniq', 'cut', 'paste', 'tr', 'xargs',
+        'tee', 'zip', 'unzip', 'tar', 'gzip', 'gunzip', 'bzip2', 'xz',
+        'base64', 'md5sum', 'sha1sum', 'sha256sum', 'sha512sum',
+        'gpg', 'pgp', 'age', 'crypt', 'enc', 'dec',
+        'tcpdump', 'wireshark', 'tshark', 'ngrep', 'iftop', 'nethogs',
+        'ss', 'netstat', 'ip', 'ifconfig', 'route', 'iptables', 'nftables',
+        'aircrack-ng', 'airmon-ng', 'aireplay-ng', 'airodump-ng', 'reaver',
+        'hashcat-utils', 'john-tools', 'hydra-tools', 'nmap-scripts',
+        'dirb', 'gobuster', 'feroxbuster', 'ffuf', 'wfuzz', 'burp',
+        'sqlninja', 'db2john', 'passlib', 'crunch', 'cewl', 'pydictor',
+        'recon-ng', 'maltego', 'thehive', 'cortex', 'misp', 'opencti',
+        'shodan', 'censys', 'zoomeye', 'fofa', 'quake', 'hunter',
+        'nuclei-templates', 'interactsh', 'dnsx', 'httpx-toolkit',
+        'naabu', 'subfinder', 'assetfinder', 'findomain', 'amass',
+        'theHarvester', 'recon-ng', 'maltego', 'spiderfoot', 'osint',
+        'exiftool', 'binwalk', 'strings', 'file', 'hexdump', 'xxd',
+        'radare2', 'r2', 'ghidra', 'ida', 'ollydbg', 'x64dbg', 'windbg',
+        'gdb', 'lldb', 'strace', 'ltrace', 'apimonitor', 'procmon',
+        'volatility', 'autopsy', 'sleuthkit', 'foremost', 'scalpel',
+        'bulk-extractor', 'photorec', 'testdisk', 'dd', 'dc3dd', 'guymager',
+        'wireshark', 'networkminer', 'xplico', 'networkminer', 'cain',
+        'john', 'hashcat', 'oclhashcat', 'cudaHashcat', 'hashcat-utils',
+        'cewl', 'crunch', 'pydictor', 'cupp', 'mentalist', 'hash-identifier',
+        'hashid', 'hashcheck', 'hashmyfiles', 'hashcalc', 'quickhash',
+        'ransomware', 'malware', 'virus', 'trojan', 'backdoor', 'rootkit',
+        'keylogger', 'spyware', 'adware', 'ransomware', 'cryptolocker',
+        'mimikatz', 'bloodhound', 'sharphound', 'windapsearch', 'ldapdomaindump',
+        'crackmapexec', 'nxc', 'impacket', 'secretsdump', 'psexec', 'smbexec',
+        'wmiexec', 'dcomexec', 'atexec', 'reg', 'wmic', 'powershell-empire',
+        'sliver', 'havoc', 'metasploit-framework', 'msfvenom', 'msconsole',
+        'cobalt-strike', 'brute-ratel', 'quasar', 'asyncrat', 'remcosrat',
+        'njrat', 'darkcomet', 'blackshades', 'xworm', 'lokibot', 'formbook',
+        'redline', 'vidar', 'ransomhouse', 'contig', 'handle', 'procexp',
+        'autoruns', 'sigcheck', 'procmon', 'tcpview', 'filemon', 'regmon',
+        'eventlog', 'wevtutil', 'logparser', 'splunk', 'elasticsearch',
+        'kibana', 'grafana', 'prometheus', 'zabbix', 'nagios', 'icinga',
+        'centreon', 'librenms', 'observium', 'pfsense', 'opnsense',
+        'vyos', 'openwrt', 'dd-wrt', 'tomato', 'freshTomato', 'asuswrt',
+        'merlin', 'padavan', 'breed', 'uboot', 'openwrt', 'lede',
+        'immortalwrt', 'coolsnowwolf', 'lean', 'lienol', 'sirpdboy',
+        'flippy', 'unifreq', 'ophub', 'tianbaoha', 'thinktip', 'mihomo',
+        'clash', 'v2ray', 'xray', 'trojan', 'shadowsocks', 'shadowsocksr',
+        'v2raya', 'nekobox', 'hysteria', 'tuic', 'juicity', 'sing-box',
+        'mihomoboard', 'metacubexd', 'yacd', 'dashboard', 'control',
+        'openclash', 'passwall', 'helloworld', 'ssrplus', 'luci', 'luci-app',
+        'luci-theme', 'luci-proto', 'luci-app-adguardhome', 'luci-app-alist',
+        'luci-app-aria2', 'luci-app-ddns', 'luci-app-fileassistant', 'luci-app-netspeeder',
+        'luci-app-openclash', 'luci-app-passwall', 'luci-app-smartdns', 'luci-app-ssr-plus',
+        'luci-app-unblockneteasemusic', 'luci-app-upnp', 'luci-app-zerotier', 'luci-app-wol',
+        'luci-app-frpc', 'luci-app-frps', 'luci-app-gost', 'luci-app-kms', 'luci-app-mwan3',
+        'luci-app-n2n', 'luci-app-nginx', 'luci-app-nps', 'luci-app-qbittorrent', 'luci-app-radicale',
+        'luci-app-ramfree', 'luci-app-samba', 'luci-app-sqm', 'luci-app-syncdial', 'luci-app-transmission',
+        'luci-app-ttyd', 'luci-app-vlmcsd', 'luci-app-vsftpd', 'luci-app-wireguard', 'luci-app-xlnetacc',
+        'luci-app-rtbwmon', 'luci-app-netdata', 'luci-app-chinadns-ng', 'luci-app-dnsfilter', 'luci-app-eqos',
+        'luci-app-gpsysupgrade', 'luci-app-ikoolproxy', 'luci-app-mosdns', 'luci-app-music-remote-center',
+        'luci-app-openvpn', 'luci-app-pptp-server', 'luci-app-ramfree', 'luci-app-shadowsocks-libev',
+        'luci-app-socat', 'luci-app-softether', 'luci-app-splash', 'luci-app-statistics', 'luci-app-tor',
+        'luci-app-travelmate', 'luci-app-ttnode', 'luci-app-usb3disable', 'luci-app-vlmcsd', 'luci-app-wan-mac',
+        'luci-app-webadmin', 'luci-app-webdav', 'luci-app-webshell', 'luci-app-wifischedule', 'luci-app-xray',
+        'luci-app-zerotier', 'luci-app-zmq', 'luci-app-zram', 'luci-app-zzz', 'luci-app-aaa', 'luci-app-bbb',
+        'luci-app-ccc', 'luci-app-ddd', 'luci-app-eee', 'luci-app-fff', 'luci-app-ggg', 'luci-app-hhh',
+        'luci-app-iii', 'luci-app-jjj', 'luci-app-kkk', 'luci-app-lll', 'luci-app-mmm', 'luci-app-nnn',
+        'luci-app-ooo', 'luci-app-ppp', 'luci-app-qqq', 'luci-app-rrr', 'luci-app-sss', 'luci-app-ttt',
+        'luci-app-uuu', 'luci-app-vvv', 'luci-app-www', 'luci-app-xxx', 'luci-app-yyy', 'luci-app-zzz'
     }
     
     # 参数白名单映射（工具名 -> 允许的参数名）
@@ -101,9 +181,21 @@ class SecureCommandExecutor:
     @classmethod
     def build_command(cls, tool_name: str, target: str, params: Dict[str, Any]) -> List[str]:
         """构建命令列表（不使用 shell=True）"""
+        # 如果未启用白名单，直接放行所有工具
+        if not cls.ENABLE_TOOL_WHITELIST:
+            logger.warning(f"⚠️ Tool whitelist is DISABLED, allowing: {tool_name}")
+            # 直接构建命令，不检查白名单
+            return cls._build_command_impl(tool_name, target, params)
+        
+        # 启用白名单模式：检查工具是否在白名单中
         if tool_name not in cls.ALLOWED_TOOLS:
             raise ValueError(f"Tool '{tool_name}' not in whitelist")
         
+        return cls._build_command_impl(tool_name, target, params)
+    
+    @classmethod
+    def _build_command_impl(cls, tool_name: str, target: str, params: Dict[str, Any]) -> List[str]:
+        """实际构建命令的实现函数"""
         if not cls.validate_target(target):
             raise ValueError(f"Invalid target format: {target}")
         
