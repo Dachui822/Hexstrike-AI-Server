@@ -40,7 +40,9 @@ def list_tasks():
         "tasks": [{
             "id": t.id, "tool": t.tool_name, "target": t.target,
             "status": t.status.value.lower() if t.status else "unknown",
-            "created_at": t.created_at.isoformat()
+            "created_at": t.created_at.isoformat(),
+            "started_at": t.started_at.isoformat() if t.started_at else None,
+            "completed_at": t.completed_at.isoformat() if t.completed_at else None
         } for t in pagination.items]
     })
 

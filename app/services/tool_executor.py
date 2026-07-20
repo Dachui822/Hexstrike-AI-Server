@@ -445,14 +445,21 @@ class ToolExecutor:
                         text=True,
                         creationflags=creationflags
                     )
-                else:  # Linux/macOS
+                else:  # Linux/macOS - 使用进程组 + 降低优先级
+                    def _set_child_pgid_and_nice():
+                        os.setsid()
+                        try:
+                            os.nice(10)  # 降低子进程优先级，避免抢占主进程资源
+                        except PermissionError:
+                            pass  # 非 root 用户可能无法设置 nice 值
+
                     process = subprocess.Popen(
                         cmd,
                         shell=True,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         text=True,
-                        preexec_fn=os.setsid
+                        preexec_fn=_set_child_pgid_and_nice
                     )
 
                 start_time = time.time()

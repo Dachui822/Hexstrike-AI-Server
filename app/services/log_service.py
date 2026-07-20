@@ -5,6 +5,7 @@ import queue
 import threading
 import time
 import json
+import os
 from datetime import datetime
 from app.extensions import db
 import app.extensions as extensions
@@ -13,6 +14,10 @@ import logging
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)
+
+# 降级日志目录
+FALLBACK_LOG_DIR = "/var/log/hexstrike_ai"
+os.makedirs(FALLBACK_LOG_DIR, exist_ok=True)
 
 # 全局日志队列（按任务 ID 分离）
 _log_queues = defaultdict(lambda: queue.Queue(maxsize=200))
@@ -134,7 +139,8 @@ def _flush_batch(task_id: str, batch):
         logger.error(f"Failed to flush log batch for {task_id}: {e}")
         # 降级：写入本地文件（按任务分离）
         try:
-            with open(f'/tmp/{task_id}_fallback.log', 'a') as f:
+            fallback_path = os.path.join(FALLBACK_LOG_DIR, f"hexstrike_{task_id}_fallback.log")
+            with open(fallback_path, 'a', encoding='utf-8') as f:
                 for entry in batch:
                     f.write(f"{entry.timestamp} [{entry.task_id}] {entry.message}\n")
         except Exception as fe:
@@ -142,7 +148,7 @@ def _flush_batch(task_id: str, batch):
 
 
 def push_log(task_id: str, message: str, source: str, level: str = 'INFO'):
-    """推送日志到队列（非阻塞，按任务分离）"""
+    """推送日志到队列（完全非阻塞，按任务分离）"""
     entry = LogEntry(task_id, message, source, level)
 
     # Redis 实时推送（不需要应用上下文）
@@ -154,32 +160,19 @@ def push_log(task_id: str, message: str, source: str, level: str = 'INFO'):
         except Exception as e:
             logger.error(f"Failed to push log to Redis: {e}")
 
-    # 加入对应任务的队列（非阻塞）
+    # 加入对应任务的队列（完全非阻塞）
     log_queue = _log_queues[task_id]
     try:
         log_queue.put_nowait(entry)
     except queue.Full:
-        # 队列满：先尝试扩容
-        if log_queue.maxsize < 1000:
-            # 扩容到 1000 条
-            new_queue = queue.Queue(maxsize=1000)
-            # 转移旧数据
-            while not log_queue.empty():
-                try:
-                    new_queue.put_nowait(log_queue.get_nowait())
-                except queue.Empty:
-                    break
-            _log_queues[task_id] = new_queue
-            new_queue.put_nowait(entry)
-            logger.warning(f"[{task_id}] Log queue expanded to 1000")
-        else:
-            # 已达最大容量，降级写文件
-            logger.warning(f"[{task_id}] Log queue full (1000), writing to fallback file")
-            try:
-                with open(f'/tmp/{task_id}_fallback.log', 'a') as f:
-                    f.write(f"{entry.timestamp} [{entry.task_id}] {entry.message}\n")
-            except Exception as fe:
-                logger.error(f"[{task_id}] Failed to write fallback log: {fe}")
+        # 队列满：直接降级写临时文件，不扩容不阻塞
+        logger.warning(f"[{task_id}] Log queue full (200), dropping to fallback file")
+        try:
+            fallback_path = os.path.join(FALLBACK_LOG_DIR, f"hexstrike_{task_id}_fallback.log")
+            with open(fallback_path, 'a', encoding='utf-8') as f:
+                f.write(f"{entry.timestamp} [{entry.task_id}] [{entry.source}] {entry.message}\n")
+        except Exception as fe:
+            logger.error(f"[{task_id}] Failed to write fallback log: {fe}")
 
 
 def start_consumer():
