@@ -103,6 +103,17 @@ class TaskManager:
                     time.sleep(5)
                     continue
 
+                # 动态注册 Lua 脚本（防御性编程：处理 __init__ 中 Redis 未就绪的情况）
+                if not hasattr(self, '_acquire_script') or not hasattr(self, '_release_script'):
+                    try:
+                        self._acquire_script = extensions.redis_client.register_script(LUA_ACQUIRE)
+                        self._release_script = extensions.redis_client.register_script(LUA_RELEASE)
+                        logger.info("✅ Lua scripts registered dynamically in scheduler")
+                    except Exception as e:
+                        logger.error(f"Failed to register Lua scripts: {e}")
+                        time.sleep(5)
+                        continue
+
                 # 🔍 定期补偿：修复 MySQL PENDING 但 Redis 缺失的任务
                 now = time.time()
                 if now - last_reconcile > reconcile_interval:
