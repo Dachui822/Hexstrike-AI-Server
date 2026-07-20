@@ -58,6 +58,7 @@ def get_task(task_id):
         "params": task.params,
         "error": task.error_message,
         "created_at": task.created_at.isoformat(),
+        "started_at": task.started_at.isoformat() if task.started_at else None,
         "completed_at": task.completed_at.isoformat() if task.completed_at else None
     })
 

@@ -47,7 +47,7 @@ def mcp_handler():
             # 添加任务状态查询工具
             mcp_tools.append({
                 "name": "get_task_status",
-                "description": "Get the status, progress, and result of a submitted task.",
+                "description": "Get the status and result of a submitted task.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
