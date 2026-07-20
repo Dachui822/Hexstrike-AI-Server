@@ -48,10 +48,22 @@ class TaskManager:
         self._scheduler_thread = None
         self._leader_watchdog_thread = None
 
+        # 固化 Flask 应用实例，解决后台线程上下文缺失问题
+        try:
+            from flask import current_app
+            self.app = current_app._get_current_object()
+            logger.info("✅ Flask app instance captured for TaskManager")
+        except RuntimeError:
+            self.app = None
+            logger.warning("⚠️ Failed to capture Flask app instance during init")
+
         # 注册 Lua 脚本
         if extensions.redis_client:
-            self._acquire_script = extensions.redis_client.register_script(LUA_ACQUIRE)
-            self._release_script = extensions.redis_client.register_script(LUA_RELEASE)
+            try:
+                self._acquire_script = extensions.redis_client.register_script(LUA_ACQUIRE)
+                self._release_script = extensions.redis_client.register_script(LUA_RELEASE)
+            except Exception as e:
+                logger.error(f"Failed to register Lua scripts in init: {e}")
 
         # 启动后台调度器（带 Leader 选举）
         self._start_scheduler()
@@ -92,16 +104,16 @@ class TaskManager:
                 time.sleep(5)
 
     def _get_app(self):
-        """安全获取 Flask 应用实例（兼容多版本与后台线程）"""
-        from flask import current_app
+        """安全获取 Flask 应用实例（优先使用初始化时固化的实例）"""
+        if self.app:
+            return self.app
         
-        # 1. 优先使用 current_app 代理（Flask 标准做法）
+        from flask import current_app
         try:
             return current_app._get_current_object()
         except RuntimeError:
             pass
             
-        # 2. 兼容 Flask-SQLAlchemy 3.x (安全调用)
         try:
             get_app_fn = getattr(db, 'get_app', None)
             if get_app_fn:
@@ -109,17 +121,36 @@ class TaskManager:
         except Exception:
             pass
             
-        # 3. 兼容 Flask-SQLAlchemy 2.x
+        return getattr(db, 'app', None)
+
+    def _cleanup_stale_running_ids(self):
+        """清理 task:running:ids 中锁已失效的脏数据（防止崩溃后并发控制假死）"""
+        if not extensions.redis_client:
+            return
         try:
-            return getattr(db, 'app', None)
-        except Exception:
-            return None
+            running_ids = extensions.redis_client.smembers('task:running:ids')
+            if not running_ids:
+                return
+
+            pipeline = extensions.redis_client.pipeline()
+            cleaned = 0
+            for tid in running_ids:
+                if not extensions.redis_client.exists(f"task:{tid}:lock"):
+                    pipeline.srem('task:running:ids', tid)
+                    cleaned += 1
+            if cleaned > 0:
+                pipeline.execute()
+                logger.warning(f"🧹 Cleaned {cleaned} stale running IDs from set")
+        except Exception as e:
+            logger.error(f"Failed to cleanup stale running IDs: {e}")
 
     def _scheduler_loop(self):
         """后台调度循环：从 Redis 队列拉取任务"""
         last_reconcile = 0
         reconcile_interval = 30  # 每 30 秒执行一次对账补偿
         running_set_key = "task:running:ids"
+
+        logger.info("🔄 Scheduler loop started")
 
         while self._scheduler_running:
             try:
@@ -150,14 +181,24 @@ class TaskManager:
                     keys=[running_set_key],
                     args=[self.max_workers, task_id_check]
                 )
+                
                 if not can_run:
-                    time.sleep(1)
-                    continue
+                    # 并发满：尝试清理脏数据（锁已失效但 Set 未清理的情况）
+                    self._cleanup_stale_running_ids()
+                    # 清理后重试一次
+                    can_run = self._acquire_script(
+                        keys=[running_set_key],
+                        args=[self.max_workers, task_id_check]
+                    )
+                    if not can_run:
+                        time.sleep(1)
+                        continue
 
                 # 2. 从队列获取任务 (ZSET 按优先级排序)
                 tasks = extensions.redis_client.zrangebyscore("task:queue", "-inf", "+inf", start=0, num=1)
                 if tasks:
                     task_id = tasks[0]
+                    logger.debug(f"📥 Picked task {task_id} from queue")
                     # 尝试加锁，防止多进程重复执行
                     if extensions.redis_client.set(f"task:{task_id}:lock", "1", nx=True, ex=300):
                         extensions.redis_client.zrem("task:queue", task_id)
@@ -165,6 +206,7 @@ class TaskManager:
                         self._release_script(keys=[running_set_key], args=[task_id_check])
                         self._acquire_script(keys=[running_set_key], args=[self.max_workers, task_id])
                         # 提交到线程池
+                        logger.info(f"🚀 Dispatching task {task_id} to thread pool")
                         self.executor.submit(self._run_task, task_id)
                     else:
                         # 锁获取失败，释放检查占位
@@ -174,7 +216,7 @@ class TaskManager:
                     self._release_script(keys=[running_set_key], args=[task_id_check])
                     time.sleep(2)
             except Exception as e:
-                logger.error(f"Scheduler error: {e}")
+                logger.error(f"Scheduler error: {e}", exc_info=True)
                 time.sleep(5)
 
     def submit_task(self, tool_name: str, target: str, params: dict, priority: int = 0, mcp_request_id: str = None) -> str:
@@ -258,10 +300,11 @@ class TaskManager:
         """实际执行任务（在线程池中运行）"""
         app = self._get_app()
         if not app:
-            logger.error(f"Cannot run task {task_id}: Flask app instance not available")
+            logger.error(f"❌ Cannot run task {task_id}: Flask app instance not available")
             return
             
         running_set_key = "task:running:ids"
+        logger.info(f"🏃 Starting execution for task {task_id}")
 
         with app.app_context():
             try:
