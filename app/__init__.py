@@ -4,7 +4,6 @@ from app.extensions import init_extensions
 from app.routes import register_blueprints
 from app.services.tool_registry import ToolRegistry
 from app.services.log_service import start_consumer as start_log_consumer
-from app.services.task_manager import task_manager
 import logging
 
 def create_app():
@@ -12,10 +11,6 @@ def create_app():
     app.config.from_object(get_config())
 
     init_extensions(app)
-    
-    # 注入 Flask 实例到 TaskManager，解决后台线程上下文缺失问题
-    task_manager.init_app(app)
-    
     register_blueprints(app)
 
     logging.basicConfig(

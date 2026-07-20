@@ -1,0 +1,41 @@
+[Unit]
+Description=HexStrike AI Celery Worker
+After=network.target redis.service mysql.service
+
+[Service]
+Type=exec
+User=hexstrike
+Group=hexstrike
+WorkingDirectory=/opt/hexstrike-ai
+
+# 环境变量
+Environment="PATH=/opt/hexstrike-ai/venv/bin"
+EnvironmentFile=/opt/hexstrike-ai/.env
+
+# 启动命令
+ExecStart=/opt/hexstrike-ai/venv/bin/celery -A worker.celery worker \
+  --loglevel=info \
+  --concurrency=${WORKER_CONCURRENCY:-10} \
+  --pool=gevent \
+  -Q hexstrike_default,hexstrike_high_priority,hexstrike_low_priority
+
+# 重启策略
+Restart=always
+RestartSec=10
+
+# 资源限制
+LimitNOFILE=65535
+LimitNPROC=4096
+
+# 日志
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hexstrike-worker
+
+# 优雅关闭
+TimeoutStopSec=30
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target
