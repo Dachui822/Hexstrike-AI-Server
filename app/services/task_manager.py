@@ -91,6 +91,17 @@ class TaskManager:
                 logger.error(f"Leader watchdog error: {e}")
                 time.sleep(5)
 
+    def _get_app(self):
+        """安全获取 Flask 应用实例（兼容后台线程与扩展上下文）"""
+        from flask import current_app
+        try:
+            return current_app._get_current_object()
+        except RuntimeError:
+            try:
+                return db.get_app()
+            except RuntimeError:
+                return None
+
     def _scheduler_loop(self):
         """后台调度循环：从 Redis 队列拉取任务"""
         last_reconcile = 0
@@ -192,9 +203,12 @@ class TaskManager:
         """补偿机制：分批将 MySQL 中 PENDING 但 Redis 队列缺失的任务重新入队"""
         if not extensions.redis_client:
             return
+        
+        app = self._get_app()
+        if not app:
+            return
+
         try:
-            from flask import current_app
-            app = current_app._get_current_object()
             batch_size = 50  # 每次处理 50 条，避免内存/DB 压力
             offset = 0
 
@@ -229,8 +243,11 @@ class TaskManager:
 
     def _run_task(self, task_id: str):
         """实际执行任务（在线程池中运行）"""
-        from flask import current_app
-        app = current_app._get_current_object()
+        app = self._get_app()
+        if not app:
+            logger.error(f"Cannot run task {task_id}: Flask app instance not available")
+            return
+            
         running_set_key = "task:running:ids"
 
         with app.app_context():
@@ -302,8 +319,9 @@ class TaskManager:
 
     def delete_task(self, task_id: str) -> bool:
         """删除任务"""
-        from flask import current_app
-        app = current_app._get_current_object()
+        app = self._get_app()
+        if not app:
+            return False
 
         with app.app_context():
             task = db.session.get(Task, task_id)
@@ -334,8 +352,9 @@ class TaskManager:
 
     def update_task(self, task_id: str, params: dict) -> bool:
         """更新任务参数（仅支持 PENDING 状态）"""
-        from flask import current_app
-        app = current_app._get_current_object()
+        app = self._get_app()
+        if not app:
+            return False
 
         with app.app_context():
             task = db.session.get(Task, task_id)
@@ -360,9 +379,12 @@ task_manager = TaskManager()
 def cleanup_stuck_tasks():
     """清理卡住的任务（用于手动执行）"""
     from datetime import datetime, timedelta
-    from flask import current_app
+    try:
+        app = db.get_app()
+    except RuntimeError:
+        logger.error("Cannot cleanup stuck tasks: Flask app instance not available")
+        return 0
 
-    app = current_app._get_current_object()
     with app.app_context():
         one_hour_ago = datetime.now() - timedelta(hours=1)
         stuck_tasks = Task.query.filter(
