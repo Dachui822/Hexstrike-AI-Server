@@ -92,15 +92,28 @@ class TaskManager:
                 time.sleep(5)
 
     def _get_app(self):
-        """安全获取 Flask 应用实例（兼容后台线程与扩展上下文）"""
+        """安全获取 Flask 应用实例（兼容多版本与后台线程）"""
         from flask import current_app
+        
+        # 1. 优先使用 current_app 代理（Flask 标准做法）
         try:
             return current_app._get_current_object()
         except RuntimeError:
-            try:
-                return db.get_app()
-            except RuntimeError:
-                return None
+            pass
+            
+        # 2. 兼容 Flask-SQLAlchemy 3.x (安全调用)
+        try:
+            get_app_fn = getattr(db, 'get_app', None)
+            if get_app_fn:
+                return get_app_fn()
+        except Exception:
+            pass
+            
+        # 3. 兼容 Flask-SQLAlchemy 2.x
+        try:
+            return getattr(db, 'app', None)
+        except Exception:
+            return None
 
     def _scheduler_loop(self):
         """后台调度循环：从 Redis 队列拉取任务"""
