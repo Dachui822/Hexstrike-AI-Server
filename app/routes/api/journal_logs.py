@@ -20,21 +20,21 @@ SERVICES = {
 
 
 @bp.route('/journal', methods=['GET'])
-def get_journal_logs():
+@bp.route('/journal/<unit>', methods=['GET'])
+def get_journal_logs(unit='all'):
     """
     获取 systemd journal 日志
-    
+
     参数:
         unit: 服务名称 (api, worker, all)
         lines: 返回行数 (默认 100)
         since: 起始时间 (可选，如 "2024-01-01 00:00:00")
         priority: 日志级别 (0-7, 0=emerg, 3=err, 4=warn, 6=info, 7=debug)
     """
-    unit = request.args.get('unit', 'all')
     lines = request.args.get('lines', 100, type=int)
     since = request.args.get('since', None)
     priority = request.args.get('priority', 6, type=int)
-    
+
     # 确定要查询的服务单元
     if unit in SERVICES:
         service_units = SERVICES[unit]
@@ -96,17 +96,17 @@ def get_journal_logs():
 
 
 @bp.route('/journal/stream', methods=['GET'])
-def stream_journal_logs():
+@bp.route('/journal/<unit>/stream', methods=['GET'])
+def stream_journal_logs(unit='all'):
     """
     Server-Sent Events: 实时推送 journal 日志
-    
+
     参数:
         unit: 服务名称 (api, worker, all)
         lines: 初始加载行数 (默认 50)
     """
-    unit = request.args.get('unit', 'all')
     lines = request.args.get('lines', 50, type=int)
-    
+
     # 确定服务单元
     if unit in SERVICES:
         service_units = SERVICES[unit]
@@ -155,10 +155,9 @@ def stream_journal_logs():
 
 
 @bp.route('/journal/stats', methods=['GET'])
-def get_journal_stats():
+@bp.route('/journal/<unit>/stats', methods=['GET'])
+def get_journal_stats(unit='all'):
     """获取 journal 统计信息"""
-    unit = request.args.get('unit', 'all')
-    
     # 确定服务单元
     if unit in SERVICES:
         service_units = SERVICES[unit]
