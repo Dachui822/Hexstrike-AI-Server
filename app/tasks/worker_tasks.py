@@ -260,7 +260,7 @@ class SecureCommandExecutor:
                 cmd.extend(['-t', str(params['templates'])])
             if 'severity' in params:
                 cmd.extend(['-severity', str(params['severity'])])
-        
+
         # 通用参数处理
         if 'additional_args' in params:
             additional = str(params['additional_args'])
@@ -381,6 +381,19 @@ def _execute_task_impl(
         output_path = output_dir / f"{task_id}.log"
         logger.warning(f" Cannot write to {output_dir}, using /tmp instead: {e}")
 
+    # 创建日志文件并写入命令信息（任务开始时就创建）
+    try:
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(f"# Task ID: {task_id}\n")
+            f.write(f"# Tool: {tool_name}\n")
+            f.write(f"# Target: {target}\n")
+            f.write(f"# Command: {' '.join(cmd)}\n")
+            f.write(f"# Started at: {datetime.now().isoformat()}\n")
+            f.write(f"# {'='*60}\n\n")
+        logger.info(f" Task log file created: {output_path}")
+    except Exception as write_err:
+        logger.error(f" Failed to create log file: {write_err}")
+
     try:
         # 启动进程
         process = subprocess.Popen(
@@ -393,6 +406,14 @@ def _execute_task_impl(
         )
 
         logger.info(f" Process {process.pid} started for task {task_id}")
+
+        # 推送任务开始日志（实时显示命令信息）
+        try:
+            from app.services.log_service import push_log
+            push_log(task_id, f"Starting task: {tool_name} on {target}", 'system')
+            push_log(task_id, f"Command: {' '.join(cmd)}", 'system')
+        except Exception as log_err:
+            logger.warning(f"Failed to push start logs: {log_err}")
 
         # 读取输出 (stdout 和 stderr)
         output_lines = []
@@ -471,9 +492,17 @@ def _execute_task_impl(
         if remaining_stderr:
             output_lines.extend(remaining_stderr.strip().split('\n'))
 
-        # 写入输出文件
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(output_lines))
+        # 追加写入输出文件 (保留开头的命令信息)
+        with open(output_path, 'a', encoding='utf-8') as f:
+            if output_lines:
+                f.write('\n'.join(output_lines))
+                f.write('\n')
+
+        logger.info(f" Task {task_id} output written to {output_path} ({len(output_lines)} lines)")
+
+        # 如果输出文件为空，记录警告
+        if not output_lines:
+            logger.warning(f" Task {task_id} produced no output (exit code {exit_code})")
 
         logger.info(f" Task {task_id} completed with exit code {exit_code}")
 
@@ -487,9 +516,23 @@ def _execute_task_impl(
                     logger.info(f" Task {task_id} status: SUCCESS")
                 else:
                     task.status = TaskStatus.FAILED
-                    task.error_message = f"Exit code {exit_code}"
+                    # 读取输出文件获取错误信息
+                    error_detail = f"Exit code {exit_code}"
+                    try:
+                        with open(output_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            output_content = f.read().strip()
+                            if output_content:
+                                # 取最后一行或前 200 字符作为错误信息
+                                error_lines = output_content.split('\n')
+                                if error_lines:
+                                    # 优先使用最后一行（通常是错误信息）
+                                    error_detail = error_lines[-1][:500] if len(error_lines[-1]) <= 500 else error_lines[-1][:500] + "..."
+                    except Exception as read_err:
+                        logger.warning(f"Failed to read error output: {read_err}")
+                    
+                    task.error_message = error_detail
                     task.output_path = str(output_path)
-                    logger.info(f" Task {task_id} status: FAILED (exit code {exit_code})")
+                    logger.info(f" Task {task_id} status: FAILED ({error_detail})")
 
                 task.completed_at = datetime.now()
                 db.session.commit()
