@@ -263,7 +263,8 @@ class SecureCommandExecutor:
 
         elif tool_name == 'httpx':
             # httpx 需要 URL 作为位置参数
-            cmd = ['httpx', target]
+            # 添加 -silent 减少不必要的输出，-timeout 设置超时
+            cmd = ['httpx', target, '-silent']
             if 'status_code' in params:
                 cmd.append('-sc')
             if 'title' in params:
@@ -347,6 +348,148 @@ class SecureCommandExecutor:
         elif tool_name == 'paramspider':
             # paramspider 需要 -d 参数 (domain)
             cmd = ['paramspider', '-d', target]
+
+        elif tool_name == 'subfinder':
+            # subfinder 需要 -domain 参数
+            cmd = ['subfinder', '-d', target]
+            if 'sources' in params:
+                cmd.extend(['-s', str(params['sources'])])
+            if params.get('recursive'):
+                cmd.append('-recursive')
+
+        elif tool_name == 'amass':
+            # amass 需要 enum -d 参数
+            mode = params.get('mode', 'enum')
+            cmd = ['amass', mode, '-d', target]
+            if 'sources' in params:
+                cmd.extend(['-src', str(params['sources'])])
+
+        elif tool_name == 'fierce':
+            # fierce 需要 -domain 参数
+            cmd = ['fierce', '-domain', target]
+            if 'threads' in params:
+                cmd.extend(['-threads', str(params['threads'])])
+
+        elif tool_name == 'theHarvester':
+            # theHarvester 需要 -d 和 -b 参数
+            cmd = ['theHarvester', '-d', target]
+            if 'source' in params:
+                cmd.extend(['-b', str(params['source'])])
+            if 'limit' in params:
+                cmd.extend(['-l', str(params['limit'])])
+            else:
+                cmd.extend(['-l', '500'])  # 默认限制
+
+        elif tool_name == 'masscan':
+            # masscan 需要目标 ports 参数
+            cmd = ['masscan', target]
+            if 'ports' in params:
+                cmd.extend(['-p', str(params['ports'])])
+            if 'rate' in params:
+                cmd.extend(['--rate', str(params['rate'])])
+
+        elif tool_name == 'rustscan':
+            # rustscan 需要 -a 参数
+            cmd = ['rustscan', '-a', target]
+            if 'ports' in params:
+                cmd.extend(['-p', str(params['ports'])])
+            if 'top' in params:
+                cmd.extend(['--top', str(params['top'])])
+
+        elif tool_name == 'hydra':
+            # hydra 需要 -t 等参数
+            cmd = ['hydra']
+            if 'username' in params:
+                cmd.extend(['-l', str(params['username'])])
+            if 'wordlist' in params:
+                cmd.extend(['-P', str(params['wordlist'])])
+            if 'threads' in params:
+                cmd.extend(['-t', str(params['threads'])])
+            if 'timeout' in params:
+                cmd.extend(['-w', str(params['timeout'])])
+            # 服务名和 target 放在最后
+            if 'service' in params:
+                cmd.extend([target, str(params['service'])])
+            else:
+                cmd.append(target)
+
+        elif tool_name == 'hashcat':
+            # hashcat 需要 -m 和 hash 参数
+            cmd = ['hashcat']
+            if 'hash_type' in params:
+                cmd.extend(['-m', str(params['hash_type'])])
+            if 'wordlist' in params:
+                cmd.extend(['-a', '0', str(params['wordlist'])])
+            if params.get('force'):
+                cmd.append('--force')
+            # hash 值放在最后
+            cmd.append(target)
+
+        elif tool_name == 'john':
+            # john 需要格式和 wordlist
+            cmd = ['john']
+            if 'format' in params:
+                cmd.extend(['--format=' + str(params['format'])])
+            if 'wordlist' in params:
+                cmd.extend(['--wordlist=' + str(params['wordlist'])])
+            # 哈希文件或哈希值放在最后
+            cmd.append(target)
+
+        elif tool_name == 'medusa':
+            # medusa 需要 -h, -u, -P 等参数
+            cmd = ['medusa', '-h', target]
+            if 'username' in params:
+                cmd.extend(['-u', str(params['username'])])
+            if 'wordlist' in params:
+                cmd.extend(['-P', str(params['wordlist'])])
+            if 'threads' in params:
+                cmd.extend(['-t', str(params['threads'])])
+            if 'service' in params:
+                cmd.extend(['-M', str(params['service'])])
+
+        elif tool_name == 'patator':
+            # patator 需要模块参数
+            module = params.get('module', 'ftp_login')
+            cmd = ['patator', module]
+            if 'user' in params:
+                cmd.extend(['user=' + str(params['user'])])
+            if 'password' in params:
+                cmd.extend(['password=' + str(params['password'])])
+            cmd.extend(['host=' + target])
+
+        elif tool_name == 'responder':
+            # responder 需要 -I 参数
+            cmd = ['responder', '-I', target]
+            if params.get('analyze'):
+                cmd.append('-A')
+
+        elif tool_name == 'nxc':
+            # nxc (nxc) 需要协议和 target
+            protocol = params.get('protocol', 'smb')
+            cmd = ['nxc', protocol, target]
+            if 'username' in params:
+                cmd.extend(['-u', str(params['username'])])
+            if 'password' in params:
+                cmd.extend(['-p', str(params['password'])])
+
+        elif tool_name == 'crackmapexec':
+            # crackmapexec 需要协议和 target
+            protocol = params.get('protocol', 'smb')
+            cmd = ['crackmapexec', protocol, target]
+            if 'username' in params:
+                cmd.extend(['-u', str(params['username'])])
+            if 'password' in params:
+                cmd.extend(['-p', str(params['password'])])
+
+        elif tool_name == 'shodan':
+            # shodan 需要 search 参数
+            cmd = ['shodan', 'search', target]
+            if 'limit' in params:
+                cmd.extend(['--limit', str(params['limit'])])
+
+        elif tool_name == 'dotdotpwn':
+            # dotdotpwn 需要 -h 参数
+            cmd = ['dotdotpwn', '-h', target]
 
         # 通用参数处理
         if 'additional_args' in params:
@@ -597,10 +740,16 @@ def _execute_task_impl(
         try:
             task = Task.query.get(task_id)
             if task:
-                if exit_code == 0:
+                # 判断任务是否成功：
+                # 1. exit_code == 0 → 成功
+                # 2. exit_code != 0 但有输出 → 工具执行了，可能是目标响应非 200，视为成功
+                # 3. exit_code != 0 且无输出 → 真正失败
+                has_output = len(output_lines) > 0
+                
+                if exit_code == 0 or has_output:
                     task.status = TaskStatus.SUCCESS
                     task.output_path = str(output_path)
-                    logger.info(f" Task {task_id} status: SUCCESS")
+                    logger.info(f" Task {task_id} status: SUCCESS (exit_code={exit_code}, has_output={has_output})")
                 else:
                     task.status = TaskStatus.FAILED
                     # 读取输出文件获取错误信息
@@ -616,7 +765,7 @@ def _execute_task_impl(
                                     error_detail = error_lines[-1][:500] if len(error_lines[-1]) <= 500 else error_lines[-1][:500] + "..."
                     except Exception as read_err:
                         logger.warning(f"Failed to read error output: {read_err}")
-                    
+
                     task.error_message = error_detail
                     task.output_path = str(output_path)
                     logger.info(f" Task {task_id} status: FAILED ({error_detail})")

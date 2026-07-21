@@ -156,7 +156,8 @@ def push_log(task_id: str, message: str, source: str, level: str = 'INFO'):
         try:
             log_json = json.dumps(entry.to_dict())
             extensions.redis_client.lpush(f"task:{task_id}:logs", log_json)
-            extensions.redis_client.publish("hexstrike:logs", f"{task_id}|{log_json}")
+            # 使用任务特定的频道发布，便于 SSE 订阅
+            extensions.redis_client.publish(f"hexstrike:logs:{task_id}", log_json)
         except Exception as e:
             logger.error(f"Failed to push log to Redis: {e}")
 

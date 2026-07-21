@@ -307,52 +307,55 @@ def get_task_logs(task_id):
 @bp.route('/task/<task_id>/stream', methods=['GET'])
 def stream_task_logs(task_id):
     """
-    SSE 实时推送任务日志（全量读取工具扫描日志）
-    从文件轮询工具扫描日志
+    SSE 实时推送任务日志
+    从 Redis 读取日志（实时性最高）
     """
     lines_count = request.args.get('lines', 100, type=int)
-    
-    logger.info(f"SSE task log stream opened for {task_id}")
-    
+
+    logger.info(f"SSE task log stream opened for {task_id} (Redis mode)")
+
     def event_stream():
-        file_path = f"/var/log/hexstrike_ai/{task_id}.log"
-        file_position = 0
-
-        # 不发送历史日志，只推送新增内容
-        # 历史日志由前端通过 GET /api/journal/task/{task_id} 获取
+        # 从 Redis 读取历史日志
         try:
-            path = Path(file_path)
-            if path.exists():
-                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                    # 直接定位到文件末尾，只读取新增内容
-                    f.seek(0, 2)  # 移动到文件末尾
-                    file_position = f.tell()
-                    logger.debug(f"SSE stream started at position {file_position} for {file_path}")
+            from app.extensions import redis_client
+            if redis_client:
+                redis_logs = redis_client.lrange(f"task:{task_id}:logs", 0, lines_count - 1)
+                for log_bytes in redis_logs:
+                    try:
+                        log_data = json.loads(log_bytes.decode('utf-8'))
+                        yield f"data: {json.dumps({'type': 'log', 'message': log_data.get('message', ''), 'timestamp': log_data.get('timestamp', ''), 'level': log_data.get('level', 'INFO'), 'source': 'redis'})}\n\n"
+                    except Exception as e:
+                        logger.debug(f"Failed to parse log from Redis: {e}")
         except Exception as e:
-            logger.debug(f"Failed to seek task log file: {e}")
+            logger.debug(f"Failed to read logs from Redis: {e}")
         
-        # 轮询文件新增内容
-        while True:
-            try:
-                path = Path(file_path)
-                if path.exists():
-                    with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                        f.seek(file_position)
-                        new_lines = f.readlines()
-                        file_position = f.tell()
-
-                        for line in new_lines:
-                            line = line.strip()
-                            if line:
-                                yield f"data: {json.dumps({'type': 'log', 'message': line, 'source': 'file'})}\n\n"
-
-                import time
-                time.sleep(2)
-
-            except Exception as e:
-                logger.debug(f"SSE task log file poll error: {e}")
-                import time
-                time.sleep(2)
+        # 订阅 Redis Pub/Sub 接收新日志
+        try:
+            from app.extensions import redis_client
+            if redis_client:
+                pubsub = redis_client.pubsub()
+                # 订阅特定任务的日志频道
+                pubsub.psubscribe(f"hexstrike:logs:{task_id}")
+                
+                logger.debug(f"Subscribed to hexstrike:logs:{task_id}")
+                
+                for message in pubsub.listen():
+                    try:
+                        if message['type'] == 'pmessage':
+                            channel_data = message['data'].decode('utf-8')
+                            # 解析日志数据
+                            log_data = json.loads(channel_data)
+                            yield f"data: {json.dumps({'type': 'log', 'message': log_data.get('message', ''), 'timestamp': log_data.get('timestamp', ''), 'level': log_data.get('level', 'INFO'), 'source': 'redis'})}\n\n"
+                    except Exception as e:
+                        logger.debug(f"Failed to process pubsub message: {e}")
+            else:
+                # Redis 不可用，降级为文件轮询
+                logger.warning(f"Redis not available, falling back to file polling for {task_id}")
+                yield from _stream_from_file(task_id, lines_count)
+        except Exception as e:
+            logger.error(f"SSE Redis stream error for {task_id}: {e}")
+            # 降级为文件轮询
+            yield from _stream_from_file(task_id, lines_count)
     
     return Response(
         event_stream(),
@@ -362,6 +365,42 @@ def stream_task_logs(task_id):
             'X-Accel-Buffering': 'no'
         }
     )
+
+
+def _stream_from_file(task_id: str, lines_count: int):
+    """降级：从文件轮询日志"""
+    file_path = f"/var/log/hexstrike_ai/{task_id}.log"
+    file_position = 0
+    
+    try:
+        path = Path(file_path)
+        if path.exists():
+            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                f.seek(0, 2)
+                file_position = f.tell()
+    except Exception as e:
+        logger.debug(f"Failed to seek task log file: {e}")
+    
+    while True:
+        try:
+            path = Path(file_path)
+            if path.exists():
+                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                    f.seek(file_position)
+                    new_lines = f.readlines()
+                    file_position = f.tell()
+                    
+                    for line in new_lines:
+                        line = line.strip()
+                        if line:
+                            yield f"data: {json.dumps({'type': 'log', 'message': line, 'source': 'file'})}\n\n"
+            
+            import time
+            time.sleep(2)
+        except Exception as e:
+            logger.debug(f"SSE task log file poll error: {e}")
+            import time
+            time.sleep(2)
 
 
 def parse_log_line(line: str, source_file: str) -> dict:
