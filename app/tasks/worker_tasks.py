@@ -394,7 +394,7 @@ def _execute_task_impl(
 
         logger.info(f" Process {process.pid} started for task {task_id}")
 
-        # 读取输出
+        # 读取输出 (stdout 和 stderr)
         output_lines = []
         start_time = time.time()
         last_output_time = start_time
@@ -419,7 +419,22 @@ def _execute_task_impl(
                     except Exception as log_err:
                         logger.warning(f"Failed to push log: {log_err}")
             except Exception as read_err:
-                logger.warning(f"Read error: {read_err}")
+                logger.warning(f"Read stdout error: {read_err}")
+
+            # 读取 stderr (错误输出也要记录)
+            try:
+                err_line = process.stderr.readline()
+                if err_line:
+                    output_lines.append(err_line.rstrip())
+                    last_output_time = time.time()
+                    # 推送日志
+                    try:
+                        from app.services.log_service import push_log
+                        push_log(task_id, err_line.rstrip(), 'stderr')
+                    except Exception as log_err:
+                        logger.warning(f"Failed to push log: {log_err}")
+            except Exception as read_err:
+                logger.warning(f"Read stderr error: {read_err}")
 
             # 检查空闲超时
             if time.time() - last_output_time > idle_timeout:
@@ -443,14 +458,18 @@ def _execute_task_impl(
                     os.killpg(os.getpgid(process.pid), signal.SIGTERM)
                 except (ProcessLookupError, PermissionError, OSError):
                     process.kill()
-                return {"success": False, "error": "Task cancelled by user"}
+                return {"success": False, "error": "Task cancelled by user", "output_path": str(output_path)}
 
             time.sleep(1)
 
         # 读取剩余输出
-        remaining = process.stdout.read()
-        if remaining:
-            output_lines.extend(remaining.strip().split('\n'))
+        remaining_stdout = process.stdout.read()
+        if remaining_stdout:
+            output_lines.extend(remaining_stdout.strip().split('\n'))
+        
+        remaining_stderr = process.stderr.read()
+        if remaining_stderr:
+            output_lines.extend(remaining_stderr.strip().split('\n'))
 
         # 写入输出文件
         with open(output_path, 'w', encoding='utf-8') as f:
@@ -502,11 +521,11 @@ def _execute_task_impl(
             task.error_message = "Task time limit exceeded"
             task.completed_at = datetime.now()
             db.session.commit()
-        return {"success": False, "error": "Task time limit exceeded"}
+        return {"success": False, "error": "Task time limit exceeded", "output_path": str(output_path)}
 
     except TimeLimitExceeded:
         logger.error(f" Task {task_id} hard time limit exceeded")
-        return {"success": False, "error": "Task hard time limit exceeded"}
+        return {"success": False, "error": "Task hard time limit exceeded", "output_path": str(output_path)}
 
     except Exception as e:
         logger.error(f" Task {task_id} execution error: {e}", exc_info=True)
@@ -522,7 +541,7 @@ def _execute_task_impl(
             task.error_message = str(e)
             task.completed_at = datetime.now()
             db.session.commit()
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": str(e), "output_path": str(output_path)}
 
     finally:
         # 清理进程
