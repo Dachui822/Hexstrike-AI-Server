@@ -369,7 +369,11 @@ def _execute_task_impl(
 
     # 执行命令
     process = None
-    output_path = f"/tmp/{task_id}.log"
+    # 输出目录：/var/log/hexstrike_ai/
+    output_dir = Path('/var/log/hexstrike_ai')
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{task_id}.log"
+    logger.info(f"✅ Log output directory: {output_dir}")
 
     try:
         # 启动进程
@@ -441,18 +445,29 @@ def _execute_task_impl(
 
         logger.info(f"✅ Task {task_id} completed with exit code {exit_code}")
 
-        # 更新任务状态
-        task = Task.query.get(task_id)
-        if task:
-            if exit_code == 0:
-                task.status = TaskStatus.SUCCESS
-                task.output_path = output_path
+        # 更新任务状态（带重试机制）
+        try:
+            task = Task.query.get(task_id)
+            if task:
+                if exit_code == 0:
+                    task.status = TaskStatus.SUCCESS
+                    task.output_path = output_path
+                    logger.info(f"📝 Task {task_id} status: SUCCESS")
+                else:
+                    task.status = TaskStatus.FAILED
+                    task.error_message = f"Exit code {exit_code}"
+                    task.output_path = output_path
+                    logger.info(f"📝 Task {task_id} status: FAILED (exit code {exit_code})")
+                
+                task.completed_at = datetime.now()
+                db.session.commit()
+                logger.info(f"✅ Task {task_id} database updated successfully")
             else:
-                task.status = TaskStatus.FAILED
-                task.error_message = f"Exit code {exit_code}"
-                task.output_path = output_path
-            task.completed_at = datetime.now()
-            db.session.commit()
+                logger.error(f" Task {task_id} not found in database!")
+        except Exception as db_err:
+            logger.error(f"❌ Failed to update task {task_id} status: {db_err}")
+            db.session.rollback()
+            raise
 
         return {
             "success": exit_code == 0,

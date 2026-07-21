@@ -136,6 +136,48 @@ def cleanup_stuck():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
+
+@bp.route('/fix-running', methods=['POST'])
+def fix_stuck_running():
+    """修复卡住的 RUNNING 状态任务（检查 Celery 任务实际状态）"""
+    from app.celery_app import celery
+    from celery.result import AsyncResult
+    
+    try:
+        # 查询所有 RUNNING 状态的任务
+        running_tasks = Task.query.filter(Task.status == TaskStatus.RUNNING).all()
+        fixed_count = 0
+        
+        for task in running_tasks:
+            # 检查 Celery 任务状态
+            celery_task = AsyncResult(task.id, app=celery)
+            
+            if celery_task.state in ['SUCCESS', 'FAILURE']:
+                # Celery 任务已完成，但数据库状态未更新
+                logger.warning(f"Fixing task {task.id}: {task.status} -> {celery_task.state}")
+                
+                if celery_task.state == 'SUCCESS':
+                    task.status = TaskStatus.SUCCESS
+                else:
+                    task.status = TaskStatus.FAILED
+                    if celery_task.result and 'error' in celery_task.result:
+                        task.error_message = celery_task.result['error']
+                
+                task.completed_at = datetime.now()
+                db.session.commit()
+                fixed_count += 1
+                logger.info(f"✅ Fixed task {task.id}")
+        
+        return jsonify({
+            "success": True,
+            "fixed_count": fixed_count,
+            "checked_count": len(running_tasks)
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to fix running tasks: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
 @bp.route('/<task_id>/cancel', methods=['POST'])
 def cancel_task(task_id):
     """取消运行中的任务（通过 Redis 设置取消标志）"""
