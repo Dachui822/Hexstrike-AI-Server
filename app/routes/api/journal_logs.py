@@ -237,32 +237,51 @@ def get_available_services():
 @bp.route('/task/<task_id>', methods=['GET'])
 def get_task_logs(task_id):
     """
-    获取指定任务的执行日志
-    优先从 Redis 读取实时日志，其次从数据库读取
+    获取指定任务的执行日志（全量读取工具扫描日志）
+    优先从文件读取工具扫描日志，其次从 Redis/数据库读取运行时日志
     """
     lines_count = request.args.get('lines', 100, type=int)
     
     logs = []
     source = "unknown"
     
-    # 1. 尝试从 Redis 读取（实时日志）
+    # 1. 优先从文件读取（工具扫描输出日志 - 全量读取）
     try:
-        from app.extensions import redis_client
-        if redis_client:
-            redis_logs = redis_client.lrange(f"task:{task_id}:logs", 0, -1)
-            if redis_logs:
-                for log_bytes in redis_logs[-lines_count:]:
-                    try:
-                        log_data = json.loads(log_bytes.decode('utf-8'))
-                        formatted = f"[{log_data.get('timestamp', '')}] [{log_data.get('level', 'INFO')}] {log_data.get('message', '')}"
-                        logs.append(formatted)
-                    except:
-                        logs.append(log_bytes.decode('utf-8', errors='ignore'))
-                source = "redis"
+        fallback_path = f"/var/log/hexstrike_ai/{task_id}.log"
+        path = Path(fallback_path)
+        if path.exists():
+            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                file_lines = f.readlines()
+                # 如果指定了 lines 参数，只返回最后 N 行；否则返回全部
+                if len(file_lines) > lines_count:
+                    recent_lines = file_lines[-lines_count:]
+                else:
+                    recent_lines = file_lines
+                logs = [line.strip() for line in recent_lines if line.strip()]
+            source = "file"
+            logger.info(f"Loaded {len(logs)} lines from task log file: {fallback_path} (total: {len(file_lines)})")
     except Exception as e:
-        logger.warning(f"Failed to read task logs from Redis: {e}")
+        logger.warning(f"Failed to read task log file {task_id}: {e}")
     
-    # 2. 如果 Redis 没有，从数据库读取
+    # 2. 如果文件没有日志，从 Redis 读取（实时运行时日志）
+    if not logs:
+        try:
+            from app.extensions import redis_client
+            if redis_client:
+                redis_logs = redis_client.lrange(f"task:{task_id}:logs", 0, -1)
+                if redis_logs:
+                    for log_bytes in redis_logs[-lines_count:]:
+                        try:
+                            log_data = json.loads(log_bytes.decode('utf-8'))
+                            formatted = f"[{log_data.get('timestamp', '')}] [{log_data.get('level', 'INFO')}] {log_data.get('message', '')}"
+                            logs.append(formatted)
+                        except:
+                            logs.append(log_bytes.decode('utf-8', errors='ignore'))
+                    source = "redis"
+        except Exception as e:
+            logger.warning(f"Failed to read task logs from Redis: {e}")
+    
+    # 3. 如果 Redis 也没有，从数据库读取
     if not logs:
         try:
             from app.models.task import TaskLog
@@ -276,20 +295,6 @@ def get_task_logs(task_id):
         except Exception as e:
             logger.warning(f"Failed to read task logs from database: {e}")
     
-    # 3. 如果数据库也没有，尝试从文件读取
-    if not logs:
-        try:
-            fallback_path = f"/var/log/hexstrike_ai/{task_id}.log"
-            path = Path(fallback_path)
-            if path.exists():
-                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                    file_lines = f.readlines()
-                    recent_lines = file_lines[-lines_count:] if len(file_lines) > lines_count else file_lines
-                    logs = [line.strip() for line in recent_lines if line.strip()]
-                source = "file"
-        except Exception as e:
-            logger.warning(f"Failed to read task logs from file: {e}")
-    
     return jsonify({
         "success": True,
         "logs": logs,
@@ -302,52 +307,55 @@ def get_task_logs(task_id):
 @bp.route('/task/<task_id>/stream', methods=['GET'])
 def stream_task_logs(task_id):
     """
-    SSE 实时推送任务日志（从 Redis 订阅）
+    SSE 实时推送任务日志（全量读取工具扫描日志）
+    从文件轮询工具扫描日志
     """
-    lines_count = request.args.get('lines', 50, type=int)
+    lines_count = request.args.get('lines', 100, type=int)
     
     logger.info(f"SSE task log stream opened for {task_id}")
     
     def event_stream():
-        # 先发送历史日志
-        try:
-            from app.extensions import redis_client
-            if redis_client:
-                redis_logs = redis_client.lrange(f"task:{task_id}:logs", 0, -1)
-                if redis_logs:
-                    for log_bytes in redis_logs[-lines_count:]:
-                        try:
-                            log_data = json.loads(log_bytes.decode('utf-8'))
-                            yield f"data: {json.dumps(log_data)}\n\n"
-                        except:
-                            pass
-        except Exception as e:
-            logger.error(f"Failed to read historical task logs: {e}")
+        file_path = f"/var/log/hexstrike_ai/{task_id}.log"
+        file_position = 0
         
-        # 订阅新日志
+        # 先全量读取文件中的历史日志
         try:
-            from app.extensions import redis_client
-            if redis_client:
-                pubsub = redis_client.pubsub()
-                pubsub.psubscribe(f"**hexstrike:logs")
-                
-                for message in pubsub.listen():
-                    try:
-                        if message['type'] == 'pmessage':
-                            channel = message.get('channel', b'').decode('utf-8', errors='ignore')
-                            data = message.get('data', b'').decode('utf-8', errors='ignore')
-                            # 数据格式：task_id|json
-                            if '|' in data:
-                                tid, log_json = data.split('|', 1)
-                                if tid == task_id:
-                                    log_data = json.loads(log_json)
-                                    yield f"data: {json.dumps(log_data)}\n\n"
-                    except Exception as e:
-                        logger.debug(f"SSE task log error: {e}")
-                    time.sleep(0.1)
+            path = Path(file_path)
+            if path.exists():
+                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                    all_lines = f.readlines()
+                    # 发送最后 N 行历史日志
+                    for line in all_lines[-lines_count:]:
+                        line = line.strip()
+                        if line:
+                            yield f"data: {json.dumps({'type': 'log', 'message': line, 'source': 'file'})}\n\n"
+                    file_position = f.tell()
+                    logger.debug(f"Sent {min(len(all_lines), lines_count)} historical lines from {file_path}")
         except Exception as e:
-            logger.error(f"SSE task log subscription error: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            logger.debug(f"Failed to read initial task log file: {e}")
+        
+        # 轮询文件新增内容
+        while True:
+            try:
+                path = Path(file_path)
+                if path.exists():
+                    with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                        f.seek(file_position)
+                        new_lines = f.readlines()
+                        file_position = f.tell()
+                        
+                        for line in new_lines:
+                            line = line.strip()
+                            if line:
+                                yield f"data: {json.dumps({'type': 'log', 'message': line, 'source': 'file'})}\n\n"
+                
+                import time
+                time.sleep(2)
+                
+            except Exception as e:
+                logger.debug(f"SSE task log file poll error: {e}")
+                import time
+                time.sleep(2)
     
     return Response(
         event_stream(),
