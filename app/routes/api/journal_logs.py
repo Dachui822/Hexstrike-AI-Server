@@ -373,8 +373,16 @@ def parse_log_line(line: str, source_file: str) -> dict:
             "message": inner.get("message", inner_message)
         }
 
-    # 直接解析普通日志格式
-    return _parse_inner_log(line)
+    # 直接解析普通日志格式，补充缺失字段
+    inner = _parse_inner_log(line)
+    return {
+        "type": "log",
+        "timestamp": datetime.now().isoformat(),
+        "level": inner.get("level", "INFO"),
+        "logger": inner.get("logger", "unknown"),
+        "message": inner.get("message", line),
+        "source": source_file
+    }
 
 
 def _parse_inner_log(line: str) -> dict:
@@ -388,6 +396,8 @@ def _parse_inner_log(line: str) -> dict:
 
     if match:
         return {
+            "timestamp": match.group(1),
+            "level": match.group(3),
             "logger": match.group(2),
             "message": match.group(4)
         }
@@ -398,12 +408,16 @@ def _parse_inner_log(line: str) -> dict:
 
     if match:
         return {
+            "timestamp": match.group(2),
+            "level": "INFO",
             "logger": "werkzeug",
             "message": line
         }
 
     # 无法解析，返回原样
     return {
+        "timestamp": None,
+        "level": "INFO",
         "logger": "unknown",
         "message": line
     }
