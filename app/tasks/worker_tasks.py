@@ -261,13 +261,100 @@ class SecureCommandExecutor:
             if 'severity' in params:
                 cmd.extend(['-severity', str(params['severity'])])
 
+        elif tool_name == 'httpx':
+            # httpx 需要 URL 作为位置参数
+            cmd = ['httpx', target]
+            if 'status_code' in params:
+                cmd.append('-sc')
+            if 'title' in params:
+                cmd.append('-title')
+            if 'content_length' in params:
+                cmd.append('-cl')
+            if 'server' in params:
+                cmd.append('-server')
+
+        elif tool_name == 'katana':
+            # katana 需要 URL 作为位置参数
+            cmd = ['katana', '-u', target]
+            if 'depth' in params:
+                cmd.extend(['-d', str(params['depth'])])
+
+        elif tool_name == 'hakrawler':
+            # hakrawler 需要 URL 作为位置参数
+            cmd = ['hakrawler', '-u', target]
+            if 'depth' in params:
+                cmd.extend(['-d', str(params['depth'])])
+
+        elif tool_name == 'gau':
+            # gau 需要 URL 作为位置参数
+            cmd = ['gau', target]
+
+        elif tool_name == 'waybackurls':
+            # waybackurls 从 stdin 读取域名
+            # 使用 bash -c 方式：bash -c 'echo "domain" | waybackurls'
+            cmd = ['bash', '-c', f'echo "{target}" | waybackurls']
+
+        elif tool_name == 'feroxbuster':
+            # feroxbuster 需要 URL 作为位置参数
+            cmd = ['feroxbuster', '-u', target]
+            if 'wordlist' in params:
+                cmd.extend(['-w', str(params['wordlist'])])
+            if 'threads' in params:
+                cmd.extend(['-t', str(params['threads'])])
+            if 'depth' in params:
+                cmd.extend(['-d', str(params['depth'])])
+
+        elif tool_name == 'wpscan':
+            # wpscan 需要 --url 参数
+            cmd = ['wpscan', '--url', target]
+            if 'api_token' in params:
+                cmd.extend(['--api-token', str(params['api_token'])])
+            if 'enumerate' in params:
+                cmd.extend(['--enumerate', str(params['enumerate'])])
+
+        elif tool_name == 'dirb':
+            # dirb 需要 URL 和 wordlist
+            cmd = ['dirb', target]
+            if 'wordlist' in params:
+                cmd.append(str(params['wordlist']))
+
+        elif tool_name == 'wfuzz':
+            # wfuzz 需要 URL 参数
+            cmd = ['wfuzz', '-u', target]
+            if 'wordlist' in params:
+                cmd.extend(['-w', str(params['wordlist'])])
+            if 'hc' in params:
+                cmd.extend(['--hc', str(params['hc'])])
+
+        elif tool_name == 'jaeles':
+            # jaeles 需要 -u 参数
+            cmd = ['jaeles', 'scan', '-u', target]
+            if 'templates' in params:
+                cmd.extend(['-s', str(params['templates'])])
+
+        elif tool_name == 'dalfox':
+            # dalfox 需要 -u 参数
+            cmd = ['dalfox', 'url', target]
+            if 'blind' in params:
+                cmd.extend(['--blind', str(params['blind'])])
+
+        elif tool_name == 'arjun':
+            # arjun 需要 -u 参数
+            cmd = ['arjun', '-u', target]
+            if 'stable' in params:
+                cmd.append('-stable')
+
+        elif tool_name == 'paramspider':
+            # paramspider 需要 -d 参数 (domain)
+            cmd = ['paramspider', '-d', target]
+
         # 通用参数处理
         if 'additional_args' in params:
             additional = str(params['additional_args'])
             for arg in additional.split():
                 if arg and not any(c in arg for c in [';', '|', '&', '$', '`']):
                     cmd.append(arg)
-        
+
         return cmd
 
 
