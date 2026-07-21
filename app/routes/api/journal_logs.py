@@ -13,9 +13,9 @@ bp = Blueprint('journal_logs', __name__)
 
 # 定义所有服务单元
 SERVICES = {
-    'api': 'hexstrike-ai.service',      # Web/API 服务
+    'api': 'hexstrike.service',      # Web/API 服务
     'worker': 'hexstrike-worker.service',  # Celery Worker
-    'all': ['hexstrike-ai.service', 'hexstrike-worker.service']
+    'all': ['hexstrike.service', 'hexstrike-worker.service']
 }
 
 
