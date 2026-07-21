@@ -34,11 +34,13 @@ SERVICES = {
 @bp.route('/<unit>', methods=['GET'])
 def get_journal_logs(unit='all'):
     """
-    获取系统日志（从文件读取）
+    获取系统日志（从文件读取，增量读取最后 N 行）
     参数：
         unit: 服务名称 (api, worker, all)
         lines: 返回行数 (默认 100)
     """
+    from collections import deque
+    
     lines_count = request.args.get('lines', 100, type=int)
 
     # 确定要读取的日志文件
@@ -56,16 +58,19 @@ def get_journal_logs(unit='all'):
         try:
             path = Path(log_file)
             if path.exists():
+                # 使用 deque 增量读取，避免加载整个文件到内存
                 with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                    file_lines = f.readlines()
-                    recent_lines = file_lines[-lines_count:] if len(file_lines) > lines_count else file_lines
+                    recent_lines = deque(maxlen=lines_count)
+                    for line in f:
+                        recent_lines.append(line)
+                    
                     for line in recent_lines:
                         line = line.strip()
                         if line:
                             parsed = parse_log_line(line, log_file)
                             formatted = f"[{parsed['timestamp']}] [{parsed['level']}] {parsed['message']}"
                             all_logs.append(formatted)
-                    logger.info(f"Loaded {len(all_logs)} lines from {log_file}")
+                logger.info(f"Loaded {len(all_logs)} lines from {log_file}")
             else:
                 logger.warning(f"Log file not found: {log_file}")
         except PermissionError:
@@ -176,11 +181,12 @@ def get_journal_stats(unit='all'):
                 continue
 
             with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                all_lines = f.readlines()
-                total = len(all_lines)
-
+                total = 0
                 level_counts = {"ERROR": 0, "WARNING": 0, "INFO": 0, "DEBUG": 0}
-                for line in all_lines:
+                
+                # 逐行读取，避免加载整个文件到内存
+                for line in f:
+                    total += 1
                     if 'ERROR' in line or 'Failed' in line:
                         level_counts["ERROR"] += 1
                     elif 'WARNING' in line or 'WARN' in line:
