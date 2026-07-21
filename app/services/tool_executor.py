@@ -530,9 +530,9 @@ class ToolExecutor:
                     exit_code = process.returncode
 
                 if exit_code == 0:
-                    return {"success": True, "output_path": output_path}
+                    return {"success": True, "output_path": str(output_path)}
                 else:
-                    return {"success": False, "error": f"Exit code {exit_code}", "output_path": output_path}
+                    return {"success": False, "error": f"Exit code {exit_code}", "output_path": str(output_path)}
 
             except Exception as e:
                 logger.error(f"Execution error for task {task_id}: {e}")

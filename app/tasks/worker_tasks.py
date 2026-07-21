@@ -431,7 +431,7 @@ def _execute_task_impl(
                 return {
                     "success": False,
                     "error": f"Idle timeout after {idle_timeout}s",
-                    "output_path": output_path
+                    "output_path": str(output_path)
                 }
 
             # 检查是否被撤销
@@ -464,12 +464,12 @@ def _execute_task_impl(
             if task:
                 if exit_code == 0:
                     task.status = TaskStatus.SUCCESS
-                    task.output_path = output_path
+                    task.output_path = str(output_path)
                     logger.info(f" Task {task_id} status: SUCCESS")
                 else:
                     task.status = TaskStatus.FAILED
                     task.error_message = f"Exit code {exit_code}"
-                    task.output_path = output_path
+                    task.output_path = str(output_path)
                     logger.info(f" Task {task_id} status: FAILED (exit code {exit_code})")
 
                 task.completed_at = datetime.now()
@@ -484,7 +484,7 @@ def _execute_task_impl(
 
         return {
             "success": exit_code == 0,
-            "output_path": output_path,
+            "output_path": str(output_path),
             "exit_code": exit_code
         }
 
