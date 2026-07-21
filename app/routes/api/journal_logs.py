@@ -98,6 +98,8 @@ def stream_journal_logs(unit='all'):
         unit: 服务名称 (api, worker, all)
         lines: 初始加载行数 (默认 50)
     """
+    from collections import deque
+    
     lines_count = request.args.get('lines', 50, type=int)
 
     # 确定服务单元
@@ -123,14 +125,17 @@ def stream_journal_logs(unit='all'):
 
                         with open(path, 'r', encoding='utf-8', errors='ignore') as f:
                             f.seek(file_positions[log_file])
-                            new_lines = f.readlines()
+                            # 增量读取新行，避免一次性读取全部
+                            new_lines = deque(maxlen=100)  # 每次最多读取 100 行
+                            for line in f:
+                                new_lines.append(line)
                             file_positions[log_file] = f.tell()
 
-                        for line in new_lines:
-                            line = line.strip()
-                            if line:
-                                log_entry = parse_log_line(line, log_file)
-                                yield f"data: {json.dumps(log_entry)}\n\n"
+                            for line in new_lines:
+                                line = line.strip()
+                                if line:
+                                    log_entry = parse_log_line(line, log_file)
+                                    yield f"data: {json.dumps(log_entry)}\n\n"
                     except Exception as e:
                         logger.error(f"SSE Error reading {log_file}: {e}")
                         yield f"data: {json.dumps({'type': 'error', 'message': f'Error reading {log_file}: {e}'})}\n\n"
