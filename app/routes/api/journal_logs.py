@@ -317,22 +317,19 @@ def stream_task_logs(task_id):
     def event_stream():
         file_path = f"/var/log/hexstrike_ai/{task_id}.log"
         file_position = 0
-        
-        # 先全量读取文件中的历史日志
+
+        # 不发送历史日志，只推送新增内容
+        # 历史日志由前端通过 GET /api/journal/task/{task_id} 获取
         try:
             path = Path(file_path)
             if path.exists():
                 with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                    all_lines = f.readlines()
-                    # 发送最后 N 行历史日志
-                    for line in all_lines[-lines_count:]:
-                        line = line.strip()
-                        if line:
-                            yield f"data: {json.dumps({'type': 'log', 'message': line, 'source': 'file'})}\n\n"
+                    # 直接定位到文件末尾，只读取新增内容
+                    f.seek(0, 2)  # 移动到文件末尾
                     file_position = f.tell()
-                    logger.debug(f"Sent {min(len(all_lines), lines_count)} historical lines from {file_path}")
+                    logger.debug(f"SSE stream started at position {file_position} for {file_path}")
         except Exception as e:
-            logger.debug(f"Failed to read initial task log file: {e}")
+            logger.debug(f"Failed to seek task log file: {e}")
         
         # 轮询文件新增内容
         while True:
@@ -343,15 +340,15 @@ def stream_task_logs(task_id):
                         f.seek(file_position)
                         new_lines = f.readlines()
                         file_position = f.tell()
-                        
+
                         for line in new_lines:
                             line = line.strip()
                             if line:
                                 yield f"data: {json.dumps({'type': 'log', 'message': line, 'source': 'file'})}\n\n"
-                
+
                 import time
                 time.sleep(2)
-                
+
             except Exception as e:
                 logger.debug(f"SSE task log file poll error: {e}")
                 import time
