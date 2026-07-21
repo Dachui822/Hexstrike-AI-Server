@@ -13,6 +13,7 @@ import signal
 import logging
 import subprocess
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Any, Optional, List
 from celery import shared_task
 from celery.exceptions import SoftTimeLimitExceeded, TimeLimitExceeded
@@ -181,13 +182,10 @@ class SecureCommandExecutor:
     @classmethod
     def build_command(cls, tool_name: str, target: str, params: Dict[str, Any]) -> List[str]:
         """构建命令列表（不使用 shell=True）"""
-        # 如果未启用白名单，直接放行所有工具
         if not cls.ENABLE_TOOL_WHITELIST:
-            logger.warning(f"⚠️ Tool whitelist is DISABLED, allowing: {tool_name}")
-            # 直接构建命令，不检查白名单
+            logger.warning(f" Tool whitelist is DISABLED, allowing: {tool_name}")
             return cls._build_command_impl(tool_name, target, params)
         
-        # 启用白名单模式：检查工具是否在白名单中
         if tool_name not in cls.ALLOWED_TOOLS:
             raise ValueError(f"Tool '{tool_name}' not in whitelist")
         
@@ -265,9 +263,7 @@ class SecureCommandExecutor:
         
         # 通用参数处理
         if 'additional_args' in params:
-            # 安全解析额外参数
             additional = str(params['additional_args'])
-            # 简单分割（不处理引号）
             for arg in additional.split():
                 if arg and not any(c in arg for c in [';', '|', '&', '$', '`']):
                     cmd.append(arg)
@@ -359,21 +355,31 @@ def _execute_task_impl(
     # 构建安全命令
     try:
         cmd = SecureCommandExecutor.build_command(tool_name, target, params)
-        logger.info(f"🔧 Command built: {' '.join(cmd)}")
+        logger.info(f" Command built: {' '.join(cmd)}")
     except ValueError as e:
-        logger.error(f"❌ Command validation failed: {e}")
+        logger.error(f" Command validation failed: {e}")
         return {"success": False, "error": str(e)}
     except Exception as e:
-        logger.error(f"❌ Failed to build command: {e}")
+        logger.error(f" Failed to build command: {e}")
         return {"success": False, "error": f"Command build error: {e}"}
 
     # 执行命令
     process = None
-    # 输出目录：/var/log/hexstrike_ai/
-    output_dir = Path('/var/log/hexstrike_ai')
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"{task_id}.log"
-    logger.info(f"✅ Log output directory: {output_dir}")
+    # 修改输出目录为 /var/log/hexstrike_ai/（如果失败则使用 /tmp）
+    try:
+        output_dir = Path('/var/log/hexstrike_ai')
+        output_dir.mkdir(parents=True, exist_ok=True)
+        # 测试是否可写
+        test_file = output_dir / '.write_test'
+        test_file.touch()
+        test_file.unlink()
+        output_path = output_dir / f"{task_id}.log"
+        logger.info(f" Using log directory: {output_dir}")
+    except (PermissionError, OSError) as e:
+        # 如果 /var/log/hexstrike_ai 不可写，回退到 /tmp
+        output_dir = Path('/tmp')
+        output_path = output_dir / f"{task_id}.log"
+        logger.warning(f" Cannot write to {output_dir}, using /tmp instead: {e}")
 
     try:
         # 启动进程
@@ -418,7 +424,10 @@ def _execute_task_impl(
             # 检查空闲超时
             if time.time() - last_output_time > idle_timeout:
                 logger.warning(f" Task {task_id} idle timeout ({idle_timeout}s)")
-                process.kill()
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                except:
+                    process.kill()
                 return {
                     "success": False,
                     "error": f"Idle timeout after {idle_timeout}s",
@@ -428,8 +437,12 @@ def _execute_task_impl(
             # 检查是否被撤销
             task = Task.query.get(task_id)
             if task and task.status == TaskStatus.CANCELLED:
-                logger.info(f"🛑 Task {task_id} cancelled")
-                process.kill()
+                logger.info(f" Task {task_id} cancelled")
+                # 终止整个进程组
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                except (ProcessLookupError, PermissionError, OSError):
+                    process.kill()
                 return {"success": False, "error": "Task cancelled by user"}
 
             time.sleep(1)
@@ -443,7 +456,7 @@ def _execute_task_impl(
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write('\n'.join(output_lines))
 
-        logger.info(f"✅ Task {task_id} completed with exit code {exit_code}")
+        logger.info(f" Task {task_id} completed with exit code {exit_code}")
 
         # 更新任务状态（带重试机制）
         try:
@@ -452,20 +465,20 @@ def _execute_task_impl(
                 if exit_code == 0:
                     task.status = TaskStatus.SUCCESS
                     task.output_path = output_path
-                    logger.info(f"📝 Task {task_id} status: SUCCESS")
+                    logger.info(f" Task {task_id} status: SUCCESS")
                 else:
                     task.status = TaskStatus.FAILED
                     task.error_message = f"Exit code {exit_code}"
                     task.output_path = output_path
-                    logger.info(f"📝 Task {task_id} status: FAILED (exit code {exit_code})")
-                
+                    logger.info(f" Task {task_id} status: FAILED (exit code {exit_code})")
+
                 task.completed_at = datetime.now()
                 db.session.commit()
-                logger.info(f"✅ Task {task_id} database updated successfully")
+                logger.info(f" Task {task_id} database updated successfully")
             else:
                 logger.error(f" Task {task_id} not found in database!")
         except Exception as db_err:
-            logger.error(f"❌ Failed to update task {task_id} status: {db_err}")
+            logger.error(f" Failed to update task {task_id} status: {db_err}")
             db.session.rollback()
             raise
 
@@ -476,9 +489,12 @@ def _execute_task_impl(
         }
 
     except SoftTimeLimitExceeded:
-        logger.error(f"⏰ Task {task_id} soft time limit exceeded")
+        logger.error(f" Task {task_id} soft time limit exceeded")
         if process:
-            process.kill()
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except:
+                process.kill()
         # 更新任务状态
         task = Task.query.get(task_id)
         if task:
@@ -489,13 +505,16 @@ def _execute_task_impl(
         return {"success": False, "error": "Task time limit exceeded"}
 
     except TimeLimitExceeded:
-        logger.error(f"🔥 Task {task_id} hard time limit exceeded")
+        logger.error(f" Task {task_id} hard time limit exceeded")
         return {"success": False, "error": "Task hard time limit exceeded"}
 
     except Exception as e:
-        logger.error(f"❌ Task {task_id} execution error: {e}", exc_info=True)
+        logger.error(f" Task {task_id} execution error: {e}", exc_info=True)
         if process:
-            process.kill()
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except:
+                process.kill()
         # 更新任务状态
         task = Task.query.get(task_id)
         if task:

@@ -4,6 +4,9 @@ from app.services.tool_executor import ToolExecutor
 from app.extensions import db
 import app.extensions as extensions
 from app.models.task import Task, TaskStatus
+import logging
+
+logger = logging.getLogger(__name__)
 
 bp = Blueprint('tasks', __name__)
 
@@ -14,10 +17,10 @@ def create_task():
     target = data.get('target')
     params = data.get('params', {})
     priority = data.get('priority', 0)
-    
+
     if not tool or not target:
         return jsonify({"error": "tool and target are required"}), 400
-        
+
     task_id = task_manager.submit_task(tool, target, params, priority)
     return jsonify({"task_id": task_id, "status": "PENDING"}), 202
 
@@ -27,13 +30,13 @@ def list_tasks():
     status_filter = request.args.get('status')
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
-    
+
     query = Task.query.order_by(Task.created_at.desc())
     if status_filter:
         query = query.filter(Task.status == status_filter)
-        
+
     pagination = query.paginate(page=page, per_page=per_page, error_out=False)
-    
+
     return jsonify({
         "total": pagination.total,
         "pages": pagination.pages,
@@ -80,7 +83,7 @@ def update_task(task_id):
     """更新任务参数"""
     data = request.json
     params = data.get('params', {})
-    
+
     success = task_manager.update_task(task_id, params)
     if success:
         return jsonify({"success": True, "message": "Task updated"})
@@ -89,7 +92,6 @@ def update_task(task_id):
 @bp.route('/config', methods=['GET'])
 def get_config():
     """获取任务调度配置（Celery 架构）"""
-    import app.extensions as extensions
     import os
 
     # Celery 架构中，并发数由 WORKER_CONCURRENCY 环境变量控制
@@ -115,13 +117,12 @@ def update_config():
         return jsonify({"error": "Invalid max_workers value"}), 400
 
     # Celery 架构中，需要重启 Worker 才能生效
-    # 这里仅返回提示信息
     return jsonify({
         "success": True,
         "max_workers": new_limit,
         "architecture": "celery",
         "note": "To apply this change, restart the Celery Worker with the new WORKER_CONCURRENCY environment variable",
-        "command": "export WORKER_CONCURRENCY={new_limit} && sudo systemctl restart hexstrike-worker"
+        "command": f"export WORKER_CONCURRENCY={new_limit} && sudo systemctl restart hexstrike-worker"
     })
 
 @bp.route('/cleanup', methods=['POST'])
@@ -136,78 +137,67 @@ def cleanup_stuck():
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
-
-@bp.route('/fix-running', methods=['POST'])
-def fix_stuck_running():
-    """修复卡住的 RUNNING 状态任务（检查 Celery 任务实际状态）"""
-    from app.celery_app import celery
-    from celery.result import AsyncResult
-    
-    try:
-        # 查询所有 RUNNING 状态的任务
-        running_tasks = Task.query.filter(Task.status == TaskStatus.RUNNING).all()
-        fixed_count = 0
-        
-        for task in running_tasks:
-            # 检查 Celery 任务状态
-            celery_task = AsyncResult(task.id, app=celery)
-            
-            if celery_task.state in ['SUCCESS', 'FAILURE']:
-                # Celery 任务已完成，但数据库状态未更新
-                logger.warning(f"Fixing task {task.id}: {task.status} -> {celery_task.state}")
-                
-                if celery_task.state == 'SUCCESS':
-                    task.status = TaskStatus.SUCCESS
-                else:
-                    task.status = TaskStatus.FAILED
-                    if celery_task.result and 'error' in celery_task.result:
-                        task.error_message = celery_task.result['error']
-                
-                task.completed_at = datetime.now()
-                db.session.commit()
-                fixed_count += 1
-                logger.info(f"✅ Fixed task {task.id}")
-        
-        return jsonify({
-            "success": True,
-            "fixed_count": fixed_count,
-            "checked_count": len(running_tasks)
-        })
-        
-    except Exception as e:
-        logger.error(f"Failed to fix running tasks: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
 @bp.route('/<task_id>/cancel', methods=['POST'])
 def cancel_task(task_id):
-    """取消运行中的任务（通过 Redis 设置取消标志）"""
+    """
+    取消任务（支持 PENDING 和 RUNNING 状态）
+    """
     try:
-        # 检查任务是否存在
         task = db.session.get(Task, task_id)
         if not task:
             return jsonify({"error": "Task not found"}), 404
 
-        if task.status != TaskStatus.RUNNING:
-            return jsonify({"error": f"Task is not running (status: {task.status.value})"}), 400
+        # 支持 PENDING 和 RUNNING 状态
+        if task.status not in [TaskStatus.PENDING, TaskStatus.RUNNING]:
+            return jsonify({
+                "error": f"Cannot cancel task in {task.status.value} state"
+            }), 400
 
-        # 设置 Redis 取消标志（任务执行时会检查）
-        if extensions.redis_client:
-            extensions.redis_client.set(f"task:{task_id}:cancel", "1")
-            logger.info(f"🛑 Cancel signal set for task {task_id} in Redis")
-        else:
-            logger.warning("Redis not available, cancel signal not set")
+        logger.info(f" Cancelling task {task_id} (status: {task.status.value})")
 
-        # 立即更新数据库状态（可选：也可以等任务自己退出后再更新）
-        task.status = TaskStatus.CANCELLED
-        task.completed_at = db.func.now()
-        db.session.commit()
+        # PENDING: 从队列移除
+        if task.status == TaskStatus.PENDING:
+            if extensions.redis_client:
+                extensions.redis_client.zrem("task:queue", task_id)
+                logger.info(f" Removed task {task_id} from Redis queue")
+            
+            task.status = TaskStatus.CANCELLED
+            task.completed_at = db.func.now()
+            task.error_message = "Cancelled by user (PENDING)"
+            db.session.commit()
+            
+            return jsonify({
+                "success": True,
+                "message": "Task cancelled (was PENDING)"
+            })
 
-        return jsonify({
-            "success": True, 
-            "message": "Cancel signal sent. Task will stop shortly."
-        })
+        # RUNNING: 多重取消
+        if task.status == TaskStatus.RUNNING:
+            # 1. Redis 取消标志
+            if extensions.redis_client:
+                extensions.redis_client.setex(f"task:{task_id}:cancel", 300, "1")
+                logger.info(f" Cancel signal set for {task_id}")
+            
+            # 2. Celery revoke
+            try:
+                from app.celery_app import celery
+                celery.control.revoke(task_id, terminate=True, signal='SIGTERM')
+                logger.info(f" Celery revoke sent for {task_id}")
+            except Exception as celery_err:
+                logger.warning(f"Celery revoke failed: {celery_err}")
+            
+            # 3. 更新状态
+            task.status = TaskStatus.CANCELLED
+            task.error_message = "Cancelling..."
+            db.session.commit()
+            
+            return jsonify({
+                "success": True,
+                "message": "Cancel signal sent. Task will stop shortly."
+            })
+
     except Exception as e:
-        logger.error(f"Failed to cancel task {task_id}: {e}")
+        logger.error(f"Failed to cancel task {task_id}: {e}", exc_info=True)
         return jsonify({"success": False, "error": str(e)}), 500
 
 @bp.route('/active', methods=['GET'])
