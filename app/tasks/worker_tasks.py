@@ -700,15 +700,81 @@ def _execute_task_impl(
                     "output_path": str(output_path)
                 }
 
-            # 检查是否被撤销
-            task = Task.query.get(task_id)
-            if task and task.status == TaskStatus.CANCELLED:
-                logger.info(f" Task {task_id} cancelled")
+            # 检查是否被撤销 (检查数据库和 Redis 两种取消标志)
+            should_cancel = False
+            
+            # 1. 检查数据库状态
+            try:
+                task = Task.query.get(task_id)
+                if task and task.status == TaskStatus.CANCELLED:
+                    should_cancel = True
+                    logger.info(f" Task {task_id} cancelled (DB flag)")
+            except Exception:
+                pass
+            
+            # 2. 检查 Redis 取消标志 (API 设置的取消标志)
+            if not should_cancel:
+                try:
+                    from app.extensions import redis_client
+                    if redis_client:
+                        cancel_flag = redis_client.get(f"task:{task_id}:cancel")
+                        if cancel_flag:
+                            should_cancel = True
+                            logger.info(f" Task {task_id} cancelled (Redis flag)")
+                except Exception as e:
+                    logger.debug(f"Failed to check cancel flag: {e}")
+            
+            if should_cancel:
+                logger.info(f" Task {task_id} cancelling, terminating process group...")
+                
+                # 写入取消日志到工具扫描日志文件
+                try:
+                    with open(output_path, 'a', encoding='utf-8') as f:
+                        f.write(f"\n# {'='*60}\n")
+                        f.write(f"# Task CANCELLED at: {datetime.now().isoformat()}\n")
+                        f.write(f"# Cancel signal: Redis flag detected\n")
+                        f.write(f"# Terminating process group...\n")
+                        f.write(f"# {'='*60}\n\n")
+                except Exception as write_err:
+                    logger.warning(f"Failed to write cancel log to file: {write_err}")
+                
                 # 终止整个进程组
                 try:
                     os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-                except (ProcessLookupError, PermissionError, OSError):
+                    logger.info(f" Sent SIGTERM to process group {os.getpgid(process.pid)}")
+                    
+                    # 写入进程终止日志
+                    with open(output_path, 'a', encoding='utf-8') as f:
+                        f.write(f"# Sent SIGTERM to PID {process.pid}\n")
+                except (ProcessLookupError, PermissionError, OSError) as sig_err:
+                    logger.warning(f" SIGTERM failed, using SIGKILL: {sig_err}")
                     process.kill()
+                    
+                    # 写入强制杀死日志
+                    with open(output_path, 'a', encoding='utf-8') as f:
+                        f.write(f"# SIGTERM failed, used SIGKILL\n")
+                
+                # 等待进程退出 (最多等 5 秒)
+                try:
+                    process.wait(timeout=5)
+                    with open(output_path, 'a', encoding='utf-8') as f:
+                        f.write(f"# Process exited gracefully\n")
+                except subprocess.TimeoutExpired:
+                    logger.warning(f" Process did not exit gracefully, forcing kill...")
+                    process.kill()
+                    
+                    # 写入强制终止日志
+                    with open(output_path, 'a', encoding='utf-8') as f:
+                        f.write(f"# Process timeout, forced SIGKILL\n")
+                
+                # 写入最终状态
+                try:
+                    with open(output_path, 'a', encoding='utf-8') as f:
+                        f.write(f"\n# Task terminated at: {datetime.now().isoformat()}\n")
+                        f.write(f"# Status: CANCELLED_BY_USER\n")
+                except Exception as write_err:
+                    logger.warning(f"Failed to write final status: {write_err}")
+                
                 return {"success": False, "error": "Task cancelled by user", "output_path": str(output_path)}
 
             time.sleep(1)
@@ -727,6 +793,16 @@ def _execute_task_impl(
             if output_lines:
                 f.write('\n'.join(output_lines))
                 f.write('\n')
+            
+            # 写入任务完成标记
+            f.write(f"\n# {'='*60}\n")
+            if exit_code == 0:
+                f.write(f"# Task COMPLETED at: {datetime.now().isoformat()}\n")
+                f.write(f"# Exit Code: {exit_code} (SUCCESS)\n")
+            else:
+                f.write(f"# Task COMPLETED at: {datetime.now().isoformat()}\n")
+                f.write(f"# Exit Code: {exit_code} (FAILED with output)\n")
+            f.write(f"# {'='*60}\n")
 
         logger.info(f" Task {task_id} output written to {output_path} ({len(output_lines)} lines)")
 
@@ -791,6 +867,16 @@ def _execute_task_impl(
         if process:
             try:
                 os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                # 写入超时终止日志
+                try:
+                    with open(output_path, 'a', encoding='utf-8') as f:
+                        f.write(f"\n# {'='*60}\n")
+                        f.write(f"# Task TIMEOUT (soft limit) at: {datetime.now().isoformat()}\n")
+                        f.write(f"# Sent SIGKILL to process group\n")
+                        f.write(f"# Reason: Exceeded {self.soft_time_limit}s soft time limit\n")
+                        f.write(f"# {'='*60}\n")
+                except Exception as write_err:
+                    logger.warning(f"Failed to write timeout log: {write_err}")
             except:
                 process.kill()
         # 更新任务状态
@@ -804,6 +890,15 @@ def _execute_task_impl(
 
     except TimeLimitExceeded:
         logger.error(f" Task {task_id} hard time limit exceeded")
+        # 写入硬超时日志
+        try:
+            with open(output_path, 'a', encoding='utf-8') as f:
+                f.write(f"\n# {'='*60}\n")
+                f.write(f"# Task HARD TIMEOUT at: {datetime.now().isoformat()}\n")
+                f.write(f"# Reason: Exceeded {self.time_limit}s hard time limit\n")
+                f.write(f"# {'='*60}\n")
+        except Exception as write_err:
+            logger.warning(f"Failed to write hard timeout log: {write_err}")
         return {"success": False, "error": "Task hard time limit exceeded", "output_path": str(output_path)}
 
     except Exception as e:
@@ -811,6 +906,16 @@ def _execute_task_impl(
         if process:
             try:
                 os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                # 写入异常终止日志
+                try:
+                    with open(output_path, 'a', encoding='utf-8') as f:
+                        f.write(f"\n# {'='*60}\n")
+                        f.write(f"# Task ERROR at: {datetime.now().isoformat()}\n")
+                        f.write(f"# Error: {str(e)}\n")
+                        f.write(f"# Sent SIGKILL to process group\n")
+                        f.write(f"# {'='*60}\n")
+                except Exception as write_err:
+                    logger.warning(f"Failed to write error log: {write_err}")
             except:
                 process.kill()
         # 更新任务状态
