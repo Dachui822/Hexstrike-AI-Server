@@ -588,9 +588,31 @@ def _execute_task_impl(
         logger.info(f" Command built: {' '.join(cmd)}")
     except ValueError as e:
         logger.error(f" Command validation failed: {e}")
+        # 更新任务状态为 FAILED
+        try:
+            task = Task.query.get(task_id)
+            if task:
+                task.status = TaskStatus.FAILED
+                task.error_message = str(e)
+                task.completed_at = datetime.now()
+                db.session.commit()
+        except Exception as db_err:
+            logger.error(f" Failed to update task status on validation error: {db_err}")
+            db.session.rollback()
         return {"success": False, "error": str(e)}
     except Exception as e:
         logger.error(f" Failed to build command: {e}")
+        # 更新任务状态为 FAILED
+        try:
+            task = Task.query.get(task_id)
+            if task:
+                task.status = TaskStatus.FAILED
+                task.error_message = f"Command build error: {e}"
+                task.completed_at = datetime.now()
+                db.session.commit()
+        except Exception as db_err:
+            logger.error(f" Failed to update task status on build error: {db_err}")
+            db.session.rollback()
         return {"success": False, "error": f"Command build error: {e}"}
 
     # 执行命令
@@ -694,6 +716,20 @@ def _execute_task_impl(
                     os.killpg(os.getpgid(process.pid), signal.SIGTERM)
                 except:
                     process.kill()
+                
+                # 更新数据库状态为 TIMEOUT
+                try:
+                    task = Task.query.get(task_id)
+                    if task:
+                        task.status = TaskStatus.TIMEOUT
+                        task.error_message = f"Idle timeout after {idle_timeout}s"
+                        task.completed_at = datetime.now()
+                        db.session.commit()
+                        logger.info(f" Task {task_id} status updated to TIMEOUT")
+                except Exception as db_err:
+                    logger.error(f" Failed to update task status on timeout: {db_err}")
+                    db.session.rollback()
+                
                 return {
                     "success": False,
                     "error": f"Idle timeout after {idle_timeout}s",
@@ -774,7 +810,20 @@ def _execute_task_impl(
                         f.write(f"# Status: CANCELLED_BY_USER\n")
                 except Exception as write_err:
                     logger.warning(f"Failed to write final status: {write_err}")
-                
+
+                # 更新数据库状态为 CANCELLED
+                try:
+                    task = Task.query.get(task_id)
+                    if task:
+                        task.status = TaskStatus.CANCELLED
+                        task.error_message = "Task cancelled by user"
+                        task.completed_at = datetime.now()
+                        db.session.commit()
+                        logger.info(f" Task {task_id} status updated to CANCELLED")
+                except Exception as db_err:
+                    logger.error(f" Failed to update task status on cancel: {db_err}")
+                    db.session.rollback()
+
                 return {"success": False, "error": "Task cancelled by user", "output_path": str(output_path)}
 
             time.sleep(1)
@@ -899,6 +948,18 @@ def _execute_task_impl(
                 f.write(f"# {'='*60}\n")
         except Exception as write_err:
             logger.warning(f"Failed to write hard timeout log: {write_err}")
+        # 更新任务状态为 TIMEOUT
+        try:
+            task = Task.query.get(task_id)
+            if task:
+                task.status = TaskStatus.TIMEOUT
+                task.error_message = f"Hard time limit exceeded ({self.time_limit}s)"
+                task.completed_at = datetime.now()
+                db.session.commit()
+                logger.info(f" Task {task_id} status updated to TIMEOUT (hard limit)")
+        except Exception as db_err:
+            logger.error(f" Failed to update task status on hard timeout: {db_err}")
+            db.session.rollback()
         return {"success": False, "error": "Task hard time limit exceeded", "output_path": str(output_path)}
 
     except Exception as e:
