@@ -23,25 +23,44 @@ HexStrike AI Celery Worker 启动脚本
 import os
 import sys
 import logging
+from pathlib import Path
 
 # 添加项目路径
 sys.path.insert(0, os.path.dirname(__file__))
 
 # ============================================================================
-# 日志配置
+# 日志配置（延迟初始化，避免导入时创建文件）
 # ============================================================================
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='[ HexStrike Worker] %(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('hexstrike_worker.log', encoding='utf-8')
-    ]
-)
+def setup_logging():
+    """配置日志系统"""
+    # 优先使用 /var/log/hexstrike_ai/
+    log_dir = Path('/var/log/hexstrike_ai')
+    log_file = log_dir / 'hexstrike_worker.log'
 
-logger = logging.getLogger(__name__)
+    # 检查是否可写，否则使用 /tmp
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        test_file = log_dir / '.write_test'
+        test_file.touch()
+        test_file.unlink()
+    except (OSError, PermissionError):
+        log_dir = Path('/tmp')
+        log_file = log_dir / 'hexstrike_worker.log'
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='[ HexStrike Worker] %(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(log_file, encoding='utf-8')
+        ]
+    )
+
+    return logging.getLogger(__name__)
+
+logger = setup_logging()
 logger.info("🚀 HexStrike AI Celery Worker starting...")
 
 # ============================================================================
@@ -122,13 +141,15 @@ if __name__ == '__main__':
         'worker',
         '--loglevel=info',
         '--concurrency=' + os.environ.get('WORKER_CONCURRENCY', '10'),
-        '--pool=solo',  # 使用 solo 池（单进程，适合调试）
+        '--pool=prefork',  # 使用 prefork 池（支持 terminate）
         '-Q', 'hexstrike_default,hexstrike_high_priority,hexstrike_low_priority',
     ]
-    
-    # 生产环境使用 gevent 池
+
+    # 生产环境可使用 gevent 池（但不支持 terminate_job）
+    # 如果需要使用 gevent，设置 USE_GEVENT=true
     if os.environ.get('USE_GEVENT'):
         argv[-2] = '--pool=gevent'
+        logger.warning("️  Using gevent pool - terminate_job will NOT work (use Redis cancel flag instead)")
     
     try:
         celery.worker_main(argv)
