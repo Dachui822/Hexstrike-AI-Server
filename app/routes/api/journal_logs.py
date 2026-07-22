@@ -19,37 +19,35 @@ logger = logging.getLogger(__name__)
 # 系统服务日志文件路径
 LOG_FILES = {
     'api': '/var/log/hexstrike_ai/hexstrike_ai_service.log',
-    'worker': '/var/log/hexstrike_ai/hexstrike_worker_service.log',
+    'worker': '/var/log/hexstrike_ai/hexstrike_worker.log',  # Worker 运行日志
 }
 
-# 定义所有服务单元
+# 定义所有服务单元（移除 all 选项）
 SERVICES = {
     'api': 'hexstrike.service',
-    'worker': 'hexstrike-worker.service',
-    'all': ['hexstrike.service', 'hexstrike-worker.service']
+    'worker': 'hexstrike-worker.service'
 }
 
 
 @bp.route('/', methods=['GET'])
 @bp.route('/<unit>', methods=['GET'])
-def get_journal_logs(unit='all'):
+def get_journal_logs(unit=None):
     """
     获取系统日志（从文件读取，增量读取最后 N 行）
     参数：
-        unit: 服务名称 (api, worker, all)
+        unit: 服务名称 (api, worker)
         lines: 返回行数 (默认 100)
     """
     from collections import deque
-    
+
     lines_count = request.args.get('lines', 100, type=int)
 
     # 确定要读取的日志文件
-    if unit == 'all':
-        files_to_read = list(LOG_FILES.values())
-    elif unit in LOG_FILES:
+    if unit and unit in LOG_FILES:
         files_to_read = [LOG_FILES[unit]]
     else:
-        files_to_read = [unit]
+        # 默认返回 API 服务日志
+        files_to_read = [LOG_FILES['api']]
 
     logger.info(f"Reading logs for {unit}, lines={lines_count}, files={files_to_read}")
     all_logs = []
@@ -91,24 +89,23 @@ def get_journal_logs(unit='all'):
 
 @bp.route('/stream', methods=['GET'])
 @bp.route('/<unit>/stream', methods=['GET'])
-def stream_journal_logs(unit='all'):
+def stream_journal_logs(unit=None):
     """
     Server-Sent Events: 实时推送日志（从文件轮询）
     参数：
-        unit: 服务名称 (api, worker, all)
+        unit: 服务名称 (api, worker)
         lines: 初始加载行数 (默认 50)
     """
     from collections import deque
-    
+
     lines_count = request.args.get('lines', 50, type=int)
 
     # 确定服务单元
-    if unit == 'all':
-        files_to_read = list(LOG_FILES.values())
-    elif unit in LOG_FILES:
+    if unit and unit in LOG_FILES:
         files_to_read = [LOG_FILES[unit]]
     else:
-        files_to_read = [unit]
+        # 默认推送 API 服务日志
+        files_to_read = [LOG_FILES['api']]
 
     logger.info(f"SSE stream opened for {unit}")
 
@@ -161,15 +158,14 @@ def stream_journal_logs(unit='all'):
 
 @bp.route('/stats', methods=['GET'])
 @bp.route('/<unit>/stats', methods=['GET'])
-def get_journal_stats(unit='all'):
+def get_journal_stats(unit=None):
     """获取日志统计信息（从文件读取）"""
     # 确定要读取的文件
-    if unit == 'all':
-        files_to_read = list(LOG_FILES.values())
-    elif unit in LOG_FILES:
+    if unit and unit in LOG_FILES:
         files_to_read = [LOG_FILES[unit]]
     else:
-        files_to_read = [unit]
+        # 默认返回 API 服务统计
+        files_to_read = [LOG_FILES['api']]
 
     logger.info(f"Calculating stats for {unit}, files={files_to_read}")
     stats = {
@@ -227,8 +223,8 @@ def get_available_services():
     return jsonify({
         "success": True,
         "services": [
-            {"name": "hexstrike.service", "description": "Web/API 服务"},
-            {"name": "hexstrike-worker.service", "description": "Celery Worker"}
+            {"name": "api", "description": "Web/API 服务"},
+            {"name": "worker", "description": "Celery Worker"}
         ],
         "log_files": LOG_FILES
     })
