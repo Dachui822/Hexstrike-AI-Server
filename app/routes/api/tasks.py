@@ -186,11 +186,14 @@ def cancel_task(task_id):
                     logger.warning(f"Failed to set Redis cancel flag: {redis_err}")
                     # 继续执行 Celery revoke
 
-            # 2. Celery revoke
+            # 2. Celery revoke（某些池不支持 terminate，如 gevent）
             try:
                 from app.celery_app import celery
                 celery.control.revoke(task_id, terminate=True, signal='SIGTERM')
                 logger.info(f" Celery revoke sent for {task_id}")
+            except NotImplementedError as nie:
+                # gevent 池不支持 terminate_job，依赖 Redis 取消标志
+                logger.info(f"Celery revoke not supported with current pool: {nie}")
             except Exception as celery_err:
                 logger.warning(f"Celery revoke failed: {celery_err}")
 
