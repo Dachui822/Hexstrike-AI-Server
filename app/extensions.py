@@ -1,5 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
 from redis import Redis, ConnectionPool
+from redis.exceptions import ConnectionError as RedisConnectionError, TimeoutError as RedisTimeoutError
 import logging
 import time
 
@@ -16,25 +17,28 @@ def create_redis_pool(redis_url, max_retries=3, retry_delay=2.0):
             pool = ConnectionPool.from_url(
                 redis_url,
                 decode_responses=True,
-                max_connections=50,
+                max_connections=100,  # 增加最大连接数，支持更高并发
                 socket_timeout=5.0,
                 socket_connect_timeout=5.0,
                 retry_on_timeout=True,
-                health_check_interval=30
+                health_check_interval=30,
+                # 连接回收配置
+                max_idle_time=300,  # 连接空闲 5 分钟后回收
+                retry_on_error=[RedisConnectionError, RedisTimeoutError],
             )
-            
+
             # 测试连接
             test_client = Redis(connection_pool=pool)
             test_client.ping()
-            
+
             logger.info(f"✅ Redis connection pool created (attempt {attempt + 1}/{max_retries})")
             return pool
-            
+
         except Exception as e:
             logger.warning(f"️ Redis connection attempt {attempt + 1}/{max_retries} failed: {e}")
             if attempt < max_retries - 1:
                 time.sleep(retry_delay)
-    
+
     logger.error("❌ Redis connection pool creation failed after all retries")
     return None
 

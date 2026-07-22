@@ -157,15 +157,19 @@ def cancel_task(task_id):
 
         # PENDING: 从队列移除
         if task.status == TaskStatus.PENDING:
-            if extensions.redis_client:
-                extensions.redis_client.zrem("task:queue", task_id)
-                logger.info(f" Removed task {task_id} from Redis queue")
-            
+            try:
+                if extensions.redis_client:
+                    extensions.redis_client.zrem("task:queue", task_id)
+                    logger.info(f" Removed task {task_id} from Redis queue")
+            except Exception as redis_err:
+                logger.warning(f"Failed to remove task from Redis queue: {redis_err}")
+                # 继续执行，不影响取消流程
+
             task.status = TaskStatus.CANCELLED
             task.completed_at = db.func.now()
             task.error_message = "Cancelled by user (PENDING)"
             db.session.commit()
-            
+
             return jsonify({
                 "success": True,
                 "message": "Task cancelled (was PENDING)"
@@ -173,11 +177,15 @@ def cancel_task(task_id):
 
         # RUNNING: 多重取消
         if task.status == TaskStatus.RUNNING:
-            # 1. Redis 取消标志
+            # 1. Redis 取消标志（带重试）
             if extensions.redis_client:
-                extensions.redis_client.setex(f"task:{task_id}:cancel", 300, "1")
-                logger.info(f" Cancel signal set for {task_id}")
-            
+                try:
+                    extensions.redis_client.setex(f"task:{task_id}:cancel", 300, "1")
+                    logger.info(f" Cancel signal set for {task_id}")
+                except Exception as redis_err:
+                    logger.warning(f"Failed to set Redis cancel flag: {redis_err}")
+                    # 继续执行 Celery revoke
+
             # 2. Celery revoke
             try:
                 from app.celery_app import celery
@@ -185,7 +193,7 @@ def cancel_task(task_id):
                 logger.info(f" Celery revoke sent for {task_id}")
             except Exception as celery_err:
                 logger.warning(f"Celery revoke failed: {celery_err}")
-            
+
             # 3. 更新状态
             task.status = TaskStatus.CANCELLED
             task.error_message = "Cancelling..."

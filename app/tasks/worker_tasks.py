@@ -751,9 +751,10 @@ def _execute_task_impl(
             # 2. 检查 Redis 取消标志 (API 设置的取消标志)
             if not should_cancel:
                 try:
-                    from app.extensions import redis_client
-                    if redis_client:
-                        cancel_flag = redis_client.get(f"task:{task_id}:cancel")
+                    from app.extensions import get_redis_client
+                    redis_conn = get_redis_client()
+                    if redis_conn:
+                        cancel_flag = redis_conn.get(f"task:{task_id}:cancel")
                         if cancel_flag:
                             should_cancel = True
                             logger.info(f" Task {task_id} cancelled (Redis flag)")
