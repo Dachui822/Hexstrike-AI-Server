@@ -116,24 +116,36 @@ def _flush_batch(task_id: str, batch):
         return
 
     try:
-        # 复用主应用上下文，避免重复创建连接池
-        from flask import current_app
-        app = current_app._get_current_object()
+        # 尝试获取应用上下文（支持 Web 和 Worker 两种环境）
+        app = None
+        try:
+            from flask import current_app
+            app = current_app._get_current_object()
+        except RuntimeError:
+            # 在 Celery Worker 中，current_app 不可用，需要创建新应用
+            try:
+                from app import create_app
+                app = create_app()
+            except Exception:
+                pass
 
-        with app.app_context():
-            entries = [
-                TaskLog(
-                    task_id=entry.task_id,
-                    message=entry.message,
-                    source=entry.source,
-                    level=entry.level
-                )
-                for entry in batch
-            ]
-            db.session.add_all(entries)
-            db.session.commit()
+        if app:
+            with app.app_context():
+                entries = [
+                    TaskLog(
+                        task_id=entry.task_id,
+                        message=entry.message,
+                        source=entry.source,
+                        level=entry.level
+                    )
+                    for entry in batch
+                ]
+                db.session.add_all(entries)
+                db.session.commit()
 
-        logger.debug(f"[{task_id}] Flushed {len(batch)} log entries to DB")
+            logger.debug(f"[{task_id}] Flushed {len(batch)} log entries to DB")
+        else:
+            logger.warning(f"[{task_id}] No app context available, skipping DB flush")
 
     except Exception as e:
         logger.error(f"Failed to flush log batch for {task_id}: {e}")

@@ -344,22 +344,39 @@ class ToolRegistry:
     def _auto_health_check_loop():
         """后台自动健康检测循环"""
         logger.info(f"🔄 Auto health check started (interval: {Config.HEALTH_CHECK_INTERVAL}s)")
-        
+
+        # 获取应用实例（支持 Web 和 Worker 两种环境）
+        app = None
+        try:
+            from flask import current_app
+            app = current_app._get_current_object()
+        except RuntimeError:
+            try:
+                from app import create_app
+                app = create_app()
+            except Exception:
+                pass
+
+        if not app:
+            logger.error("❌ Cannot start health check: no Flask app context available")
+            return
+
         # 启动时立即执行一次检测
         try:
-            logger.info("🏥 Running initial health check on scheduler start...")
-            result = ToolRegistry.check_all_health()
-            stats = result["stats"]
-            logger.info(
-                f"✅ Initial health check completed | "
-                f"Total: {stats['total']} | "
-                f"Available: {stats['available']} | "
-                f"Unavailable: {stats['unavailable']} | "
-                f"Errors: {stats['errors']}"
-            )
+            with app.app_context():
+                logger.info("🏥 Running initial health check on scheduler start...")
+                result = ToolRegistry.check_all_health()
+                stats = result["stats"]
+                logger.info(
+                    f"✅ Initial health check completed | "
+                    f"Total: {stats['total']} | "
+                    f"Available: {stats['available']} | "
+                    f"Unavailable: {stats['unavailable']} | "
+                    f"Errors: {stats['errors']}"
+                )
         except Exception as e:
             logger.error(f"❌ Initial health check failed: {e}")
-        
+
         # 进入定时循环
         while ToolRegistry._auto_check_running:
             try:
@@ -368,23 +385,24 @@ class ToolRegistry:
                     if not ToolRegistry._auto_check_running:
                         break
                     time.sleep(1)
-                
+
                 if not ToolRegistry._auto_check_running:
                     break
-                    
-                # 执行批量检测
-                logger.info("🏥 Starting periodic health check for all tools...")
-                result = ToolRegistry.check_all_health()
-                
-                stats = result["stats"]
-                logger.info(
-                    f"✅ Health check completed | "
-                    f"Total: {stats['total']} | "
-                    f"Available: {stats['available']} | "
-                    f"Unavailable: {stats['unavailable']} | "
-                    f"Errors: {stats['errors']}"
-                )
-                    
+
+                # 执行批量检测（在应用上下文中）
+                with app.app_context():
+                    logger.info("🏥 Starting periodic health check for all tools...")
+                    result = ToolRegistry.check_all_health()
+
+                    stats = result["stats"]
+                    logger.info(
+                        f"✅ Health check completed | "
+                        f"Total: {stats['total']} | "
+                        f"Available: {stats['available']} | "
+                        f"Unavailable: {stats['unavailable']} | "
+                        f"Errors: {stats['errors']}"
+                    )
+
             except Exception as e:
                 logger.error(f"❌ Error in auto health check loop: {e}")
                 time.sleep(60)  # 出错后等待1分钟再重试

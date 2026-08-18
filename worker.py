@@ -70,6 +70,22 @@ logger.info("🚀 HexStrike AI Celery Worker starting...")
 from app.celery_app import celery
 
 # ============================================================================
+# 初始化 CommandBuilder（Worker 启动时加载 YAML 配置）
+# ============================================================================
+
+def init_command_builder():
+    """初始化 CommandBuilder（在 Worker 进程中）"""
+    try:
+        from app.services.command_builder import CommandBuilder
+        CommandBuilder.initialize()
+        count = CommandBuilder.load_all()
+        logger.info(f"✅ CommandBuilder initialized with {count} tools")
+    except Exception as e:
+        logger.warning(f"⚠️ CommandBuilder initialization failed: {e}")
+        logger.warning("  Falling back to hardcoded command builder")
+
+
+# ============================================================================
 # 启动检查
 # ============================================================================
 
@@ -130,7 +146,10 @@ if __name__ == '__main__':
     
     # 打印启动信息
     print_startup_info()
-    
+
+    # 初始化 CommandBuilder（加载 YAML 配置）
+    init_command_builder()
+
     # 启动 Worker
     logger.info("🎯 Starting Celery Worker...")
     logger.info("ℹ️  Use Ctrl+C to stop")

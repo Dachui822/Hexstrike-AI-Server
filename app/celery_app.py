@@ -16,8 +16,8 @@ from kombu import Exchange, Queue
 # 配置常量
 # ============================================================================
 
-DEFAULT_CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
-DEFAULT_CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
+DEFAULT_CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+DEFAULT_CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", os.environ.get("REDIS_URL", "redis://localhost:6379/1"))
 DEFAULT_TASK_TIME_LIMIT = int(os.environ.get("TASK_TIME_LIMIT", 3600))  # 任务绝对超时：1 小时
 DEFAULT_TASK_SOFT_TIME_LIMIT = int(os.environ.get("TASK_SOFT_TIME_LIMIT", 3300))  # 软超时：55 分钟
 DEFAULT_WORKER_CONCURRENCY = int(os.environ.get("WORKER_CONCURRENCY", 10))  # 每个 Worker 并发数

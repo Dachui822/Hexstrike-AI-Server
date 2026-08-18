@@ -352,6 +352,9 @@ class CommandBuilder:
         for param_name in param_order:
             if param_name == "target":
                 continue
+            # 跳过 additional_args（在末尾单独处理）
+            if param_name == "additional_args":
+                continue
 
             # 检查参数是否存在
             if param_name not in params:
