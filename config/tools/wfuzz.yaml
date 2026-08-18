@@ -1,0 +1,16 @@
+tool: wfuzz
+binary: wfuzz
+target_placement: flag
+target_flag: -u
+parameters:
+  wordlist:
+    flag: -w
+    type: string
+    required: false
+  hc:
+    flag: --hc
+    type: string
+    required: false
+  additional_args:
+    type: string
+    required: false

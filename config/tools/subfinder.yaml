@@ -1,0 +1,16 @@
+tool: subfinder
+binary: subfinder
+target_placement: flag
+target_flag: -d
+parameters:
+  sources:
+    flag: -s
+    type: string
+    required: false
+  recursive:
+    flag: -recursive
+    type: boolean
+    required: false
+  additional_args:
+    type: string
+    required: false

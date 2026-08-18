@@ -1,0 +1,8 @@
+tool: dotdotpwn
+binary: dotdotpwn
+target_placement: flag
+target_flag: -h
+parameters:
+  additional_args:
+    type: string
+    required: false

@@ -1,0 +1,20 @@
+tool: ffuf
+binary: ffuf
+target_placement: flag
+target_flag: -u
+parameters:
+  wordlist:
+    flag: -w
+    type: string
+    required: false
+  method:
+    flag: -X
+    type: string
+    required: false
+  headers:
+    flag: -H
+    type: string
+    required: false
+  additional_args:
+    type: string
+    required: false

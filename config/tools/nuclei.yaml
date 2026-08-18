@@ -1,0 +1,22 @@
+tool: nuclei
+binary: nuclei
+target_placement: flag
+target_flag: -target
+parameters:
+  templates:
+    flag: -t
+    type: string
+    required: false
+  severity:
+    flag: -s
+    type: string
+    required: false
+  tags:
+    flag: -tags
+    type: string
+    required: false
+  additional_args:
+    type: string
+    required: false
+default_params:
+  severity: critical,high

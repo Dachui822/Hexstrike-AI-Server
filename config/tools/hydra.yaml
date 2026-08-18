@@ -1,0 +1,33 @@
+tool: hydra
+binary: hydra
+target_placement: trailing
+parameter_order:
+  - username
+  - wordlist
+  - threads
+  - timeout
+  - target
+  - service
+parameters:
+  username:
+    flag: -l
+    type: string
+    required: false
+  wordlist:
+    flag: -P
+    type: string
+    required: false
+  threads:
+    flag: -t
+    type: integer
+    required: false
+  timeout:
+    flag: -w
+    type: integer
+    required: false
+  service:
+    type: positional
+    required: false
+  additional_args:
+    type: string
+    required: false

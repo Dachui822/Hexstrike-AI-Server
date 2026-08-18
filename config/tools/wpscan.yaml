@@ -1,0 +1,20 @@
+tool: wpscan
+binary: wpscan
+target_placement: flag
+target_flag: --url
+parameters:
+  api_token:
+    flag: --api-token
+    type: string
+    required: false
+  enumerate:
+    flag: --enumerate
+    type: string
+    required: false
+  plugins_detection:
+    flag: --plugins-detection
+    type: string
+    required: false
+  additional_args:
+    type: string
+    required: false

@@ -1,0 +1,44 @@
+tool: nikto
+binary: nikto
+target_placement: flag
+target_flag: -host
+parameters:
+  port:
+    flag: -port
+    type: string
+    required: false
+  ssl:
+    flag: -ssl
+    type: boolean
+    required: false
+  timeout:
+    flag: -timeout
+    type: integer
+    required: false
+  useragent:
+    flag: -useragent
+    type: string
+    required: false
+  tuning:
+    flag: -tuning
+    type: string
+    required: false
+  output:
+    flag: -output
+    type: string
+    required: false
+  format:
+    flag: -Format
+    type: string
+    required: false
+  vhost:
+    flag: -vhost
+    type: string
+    required: false
+  id:
+    flag: -id
+    type: string
+    required: false
+  additional_args:
+    type: string
+    required: false

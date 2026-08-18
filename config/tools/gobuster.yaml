@@ -1,0 +1,38 @@
+tool: gobuster
+binary: gobuster
+target_placement: flag
+target_flag: -u
+parameter_order:
+  - mode
+  - wordlist
+  - threads
+  - extensions
+  - recursive
+  - additional_args
+parameters:
+  mode:
+    type: positional
+    required: false
+    default: dir
+  wordlist:
+    flag: -w
+    type: string
+    required: false
+  threads:
+    flag: -t
+    type: integer
+    required: false
+    validators:
+      min: 1
+      max: 100
+  extensions:
+    flag: -x
+    type: string
+    required: false
+  recursive:
+    flag: -r
+    type: boolean
+    required: false
+  additional_args:
+    type: string
+    required: false

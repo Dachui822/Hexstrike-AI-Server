@@ -1,0 +1,15 @@
+tool: wafw00f
+binary: wafw00f
+target_placement: positional
+parameters:
+  plugins:
+    flag: -p
+    type: string
+    required: false
+  test:
+    flag: -t
+    type: string
+    required: false
+  additional_args:
+    type: string
+    required: false

@@ -1,0 +1,82 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Tool Configuration Schema",
+  "description": "JSON Schema for validating tool YAML configurations",
+  "type": "object",
+  "required": ["tool", "binary"],
+  "properties": {
+    "tool": {
+      "type": "string",
+      "description": "Tool identifier (must match filename without .yaml)"
+    },
+    "binary": {
+      "type": "string",
+      "description": "Executable binary name"
+    },
+    "target_placement": {
+      "type": "string",
+      "enum": ["flag", "positional", "stdin_pipe", "trailing"],
+      "default": "flag",
+      "description": "How to place the target in the command"
+    },
+    "target_flag": {
+      "type": "string",
+      "description": "CLI flag for target (required when target_placement=flag)"
+    },
+    "pipe_command": {
+      "type": "string",
+      "description": "Shell command template for stdin_pipe mode (uses {target} placeholder)"
+    },
+    "parameter_order": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Explicit parameter ordering (for tools like hydra)"
+    },
+    "parameters": {
+      "type": "object",
+      "description": "Parameter definitions",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "flag": {
+            "type": "string",
+            "description": "CLI flag (e.g., -e, --threads)"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["string", "integer", "boolean", "positional"],
+            "default": "string"
+          },
+          "required": {
+            "type": "boolean",
+            "default": false
+          },
+          "default": {
+            "description": "Default value when parameter not provided"
+          },
+          "validators": {
+            "type": "object",
+            "properties": {
+              "min": {"type": "number"},
+              "max": {"type": "number"},
+              "pattern": {"type": "string", "description": "Regex pattern for validation"}
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "default_params": {
+      "type": "object",
+      "description": "Default parameters applied when not specified"
+    }
+  },
+  "additionalProperties": false,
+  "if": {
+    "properties": {"target_placement": {"const": "flag"}},
+    "required": ["target_placement"]
+  },
+  "then": {
+    "required": ["target_flag"]
+  }
+}

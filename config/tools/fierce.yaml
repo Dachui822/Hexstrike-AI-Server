@@ -1,0 +1,12 @@
+tool: fierce
+binary: fierce
+target_placement: flag
+target_flag: -domain
+parameters:
+  threads:
+    flag: -threads
+    type: integer
+    required: false
+  additional_args:
+    type: string
+    required: false

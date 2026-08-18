@@ -1,0 +1,26 @@
+tool: feroxbuster
+binary: feroxbuster
+target_placement: flag
+target_flag: -u
+parameters:
+  wordlist:
+    flag: -w
+    type: string
+    required: false
+  threads:
+    flag: -t
+    type: integer
+    required: false
+    validators:
+      min: 1
+      max: 100
+  depth:
+    flag: -d
+    type: integer
+    required: false
+    validators:
+      min: 1
+      max: 20
+  additional_args:
+    type: string
+    required: false

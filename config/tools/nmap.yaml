@@ -1,0 +1,14 @@
+tool: nmap
+binary: nmap
+target_placement: positional
+parameters:
+  scan_type:
+    type: positional
+    required: false
+  ports:
+    flag: -p
+    type: string
+    required: false
+  additional_args:
+    type: string
+    required: false

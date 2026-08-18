@@ -1,0 +1,12 @@
+tool: arjun
+binary: arjun
+target_placement: flag
+target_flag: -u
+parameters:
+  stable:
+    flag: -stable
+    type: boolean
+    required: false
+  additional_args:
+    type: string
+    required: false

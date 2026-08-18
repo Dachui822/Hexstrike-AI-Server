@@ -1,0 +1,15 @@
+tool: masscan
+binary: masscan
+target_placement: positional
+parameters:
+  ports:
+    flag: -p
+    type: string
+    required: false
+  rate:
+    flag: --rate
+    type: integer
+    required: false
+  additional_args:
+    type: string
+    required: false

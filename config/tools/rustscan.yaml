@@ -1,0 +1,16 @@
+tool: rustscan
+binary: rustscan
+target_placement: flag
+target_flag: -a
+parameters:
+  ports:
+    flag: -p
+    type: string
+    required: false
+  top:
+    flag: --top
+    type: string
+    required: false
+  additional_args:
+    type: string
+    required: false

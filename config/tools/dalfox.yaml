@@ -1,0 +1,12 @@
+tool: dalfox
+binary: dalfox
+target_placement: flag
+target_flag: url
+parameters:
+  blind:
+    flag: --blind
+    type: string
+    required: false
+  additional_args:
+    type: string
+    required: false

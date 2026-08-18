@@ -1,0 +1,20 @@
+tool: hashcat
+binary: hashcat
+target_placement: trailing
+parameters:
+  hash_type:
+    flag: -m
+    type: integer
+    required: false
+  wordlist:
+    flag: -a
+    type: integer
+    required: false
+    default: 0
+  force:
+    flag: --force
+    type: boolean
+    required: false
+  additional_args:
+    type: string
+    required: false

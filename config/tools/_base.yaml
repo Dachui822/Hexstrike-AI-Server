@@ -1,0 +1,22 @@
+# Global base configuration for all tools
+# These defaults apply to all tools unless overridden
+
+# Default target placement mode
+target_placement: flag
+
+# Default parameter type
+default_parameter_type: string
+
+# Safety settings
+safety:
+  # Characters forbidden in target values
+  forbidden_chars: [';', '|', '&', '$', '`', '(', ')', '{', '}', '[', ']', '<', '>', '\n', '\r', '\\']
+  # Maximum command length (characters)
+  max_command_length: 8192
+  # Maximum number of parameters
+  max_parameters: 50
+
+# Default additional_args handling
+additional_args:
+  allowed: true
+  forbidden_chars: [';', '|', '&', '$', '`']

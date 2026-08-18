@@ -205,3 +205,79 @@ def stop_auto_check():
         "success": success,
         "message": "Auto health check stopped" if success else "Failed to stop auto health check"
     })
+
+
+# ============================================================================
+# CommandBuilder 管理端点
+# ============================================================================
+
+@bp.route('/command-builder/status', methods=['GET'])
+def get_command_builder_status():
+    """获取 CommandBuilder 状态"""
+    try:
+        from app.services.command_builder import CommandBuilder
+        stats = CommandBuilder.get_stats()
+        return jsonify({
+            "success": True,
+            "data": stats
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+@bp.route('/command-builder/reload', methods=['POST'])
+def reload_command_builder():
+    """热重载 CommandBuilder 配置"""
+    try:
+        from app.services.command_builder import CommandBuilder
+        count = CommandBuilder.reload()
+        return jsonify({
+            "success": True,
+            "message": f"Reloaded {count} tool configurations",
+            "tool_count": count
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+@bp.route('/command-builder/tools', methods=['GET'])
+def get_configured_tools():
+    """获取所有已配置的工具列表"""
+    try:
+        from app.services.command_builder import CommandBuilder
+        tools = CommandBuilder.get_registered_tools()
+        return jsonify({
+            "success": True,
+            "data": tools,
+            "count": len(tools)
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+@bp.route('/command-builder/tool/<tool_name>', methods=['GET'])
+def get_tool_config(tool_name):
+    """获取单个工具的 YAML 配置"""
+    try:
+        from app.services.command_builder import CommandBuilder
+        config = CommandBuilder.get_tool_config(tool_name)
+        if not config:
+            return jsonify({
+                "success": False,
+                "error": f"Tool '{tool_name}' not found in configuration"
+            }), 404
+        return jsonify({
+            "success": True,
+            "data": config
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500

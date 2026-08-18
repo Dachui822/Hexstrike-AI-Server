@@ -1,0 +1,22 @@
+tool: sqlmap
+binary: sqlmap
+target_placement: flag
+target_flag: -u
+parameters:
+  level:
+    flag: --level
+    type: integer
+    required: false
+    validators:
+      min: 1
+      max: 5
+  risk:
+    flag: --risk
+    type: integer
+    required: false
+    validators:
+      min: 1
+      max: 3
+  additional_args:
+    type: string
+    required: false

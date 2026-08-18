@@ -1,0 +1,35 @@
+tool: httpx
+binary: httpx
+target_placement: positional
+parameters:
+  status_code:
+    flag: -sc
+    type: boolean
+    required: false
+  title:
+    flag: -title
+    type: boolean
+    required: false
+  content_length:
+    flag: -cl
+    type: boolean
+    required: false
+  server:
+    flag: -server
+    type: boolean
+    required: false
+  tech_detect:
+    flag: -td
+    type: boolean
+    required: false
+  follow_redirects:
+    flag: -fr
+    type: boolean
+    required: false
+  output:
+    flag: -o
+    type: string
+    required: false
+  additional_args:
+    type: string
+    required: false

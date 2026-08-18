@@ -1,0 +1,7 @@
+tool: searchsploit
+binary: searchsploit
+target_placement: positional
+parameters:
+  additional_args:
+    type: string
+    required: false

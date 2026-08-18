@@ -1,0 +1,21 @@
+tool: amass
+binary: amass
+target_placement: flag
+target_flag: -d
+parameter_order:
+  - mode
+  - sources
+  - target
+  - additional_args
+parameters:
+  mode:
+    type: positional
+    required: false
+    default: enum
+  sources:
+    flag: -src
+    type: string
+    required: false
+  additional_args:
+    type: string
+    required: false

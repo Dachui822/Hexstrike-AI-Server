@@ -1,0 +1,12 @@
+tool: responder
+binary: responder
+target_placement: flag
+target_flag: -I
+parameters:
+  analyze:
+    flag: -A
+    type: boolean
+    required: false
+  additional_args:
+    type: string
+    required: false

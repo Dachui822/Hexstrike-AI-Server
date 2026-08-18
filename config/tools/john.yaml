@@ -1,0 +1,15 @@
+tool: john
+binary: john
+target_placement: trailing
+parameters:
+  format:
+    flag: --format=
+    type: string
+    required: false
+  wordlist:
+    flag: --wordlist=
+    type: string
+    required: false
+  additional_args:
+    type: string
+    required: false

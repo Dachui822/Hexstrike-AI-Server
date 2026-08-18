@@ -1,0 +1,26 @@
+tool: crackmapexec
+binary: crackmapexec
+target_placement: flag
+target_flag:
+parameter_order:
+  - protocol
+  - target
+  - username
+  - password
+  - additional_args
+parameters:
+  protocol:
+    type: positional
+    required: false
+    default: smb
+  username:
+    flag: -u
+    type: string
+    required: false
+  password:
+    flag: -p
+    type: string
+    required: false
+  additional_args:
+    type: string
+    required: false

@@ -1,0 +1,19 @@
+tool: katana
+binary: katana
+target_placement: flag
+target_flag: -u
+parameters:
+  depth:
+    flag: -d
+    type: integer
+    required: false
+    validators:
+      min: 1
+      max: 10
+  scope:
+    flag: -scope
+    type: string
+    required: false
+  additional_args:
+    type: string
+    required: false

@@ -1,0 +1,10 @@
+tool: dirb
+binary: dirb
+target_placement: positional
+parameters:
+  wordlist:
+    type: positional
+    required: false
+  additional_args:
+    type: string
+    required: false

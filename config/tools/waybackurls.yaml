@@ -1,0 +1,8 @@
+tool: waybackurls
+binary: bash
+target_placement: stdin_pipe
+pipe_command: 'echo "{target}" | waybackurls'
+parameters:
+  additional_args:
+    type: string
+    required: false

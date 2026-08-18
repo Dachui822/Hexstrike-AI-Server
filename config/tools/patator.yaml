@@ -1,0 +1,24 @@
+tool: patator
+binary: patator
+target_placement: flag
+target_flag:
+parameter_order:
+  - module
+  - user
+  - password
+  - target
+  - additional_args
+parameters:
+  module:
+    type: positional
+    required: false
+    default: ftp_login
+  user:
+    type: positional
+    required: false
+  password:
+    type: positional
+    required: false
+  additional_args:
+    type: string
+    required: false

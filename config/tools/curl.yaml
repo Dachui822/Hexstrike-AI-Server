@@ -1,0 +1,23 @@
+tool: curl
+binary: curl
+target_placement: positional
+parameters:
+  method:
+    flag: -X
+    type: string
+    required: false
+  headers:
+    flag: -H
+    type: string
+    required: false
+  timeout:
+    flag: --max-time
+    type: integer
+    required: false
+  user_agent:
+    flag: -A
+    type: string
+    required: false
+  additional_args:
+    type: string
+    required: false

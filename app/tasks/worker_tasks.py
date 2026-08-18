@@ -119,46 +119,7 @@ class SecureCommandExecutor:
         'luci-app-ooo', 'luci-app-ppp', 'luci-app-qqq', 'luci-app-rrr', 'luci-app-sss', 'luci-app-ttt',
         'luci-app-uuu', 'luci-app-vvv', 'luci-app-www', 'luci-app-xxx', 'luci-app-yyy', 'luci-app-zzz'
     }
-    
-    # 参数白名单映射（工具名 -> 允许的参数名）
-    ALLOWED_PARAMS = {
-        'nmap': {'scan_type', 'ports', 'additional_args'},
-        'dirsearch': {'extensions', 'wordlist', 'threads', 'recursive', 'additional_args'},
-        'gobuster': {'mode', 'wordlist', 'threads', 'extensions', 'recursive', 'status_codes', 'method', 'additional_args'},
-        'sqlmap': {'level', 'risk', 'additional_args'},
-        'nikto': {'port', 'ssl', 'timeout', 'useragent', 'tuning', 'output', 'format', 'vhost', 'id', 'additional_args'},
-        'ffuf': {'wordlist', 'method', 'headers', 'additional_args'},
-        'nuclei': {'templates', 'severity', 'tags', 'additional_args'},
-        'subfinder': {'sources', 'recursive', 'additional_args'},
-        'amass': {'mode', 'sources', 'additional_args'},
-        'httpx': {'status_code', 'title', 'content_length', 'server', 'additional_args'},
-        'katana': {'depth', 'scope', 'additional_args'},
-        'feroxbuster': {'wordlist', 'threads', 'depth', 'additional_args'},
-        'wpscan': {'api_token', 'enumerate', 'plugins_detection', 'additional_args'},
-        'hydra': {'service', 'username', 'wordlist', 'threads', 'timeout', 'additional_args'},
-        'hashcat': {'hash_type', 'wordlist', 'force', 'additional_args'},
-        'john': {'wordlist', 'format', 'additional_args'},
-        'masscan': {'ports', 'rate', 'additional_args'},
-        'rustscan': {'ports', 'top', 'additional_args'},
-        'theHarvester': {'source', 'limit', 'additional_args'},
-        'fierce': {'threads', 'additional_args'},
-        'shodan': {'limit', 'additional_args'},
-        'wfuzz': {'wordlist', 'hc', 'additional_args'},
-        'jaeles': {'templates', 'additional_args'},
-        'dalfox': {'blind', 'additional_args'},
-        'arjun': {'stable', 'additional_args'},
-        'medusa': {'service', 'username', 'wordlist', 'threads', 'additional_args'},
-        'patator': {'module', 'user', 'password', 'additional_args'},
-        'responder': {'interface', 'analyze', 'additional_args'},
-        'nxc': {'protocol', 'username', 'password', 'additional_args'},
-        'crackmapexec': {'protocol', 'username', 'password', 'additional_args'},
-        'exploit-db': {'additional_args'},
-        'searchsploit': {'additional_args'},
-        'waybackurls': {'additional_args'},
-        'dotdotpwn': {'additional_args'},
-        'hakrawler': {'depth', 'additional_args'},
-    }
-    
+
     # IP/域名验证正则
     import re
     IP_PATTERN = re.compile(r'^(\d{1,3}\.){3}\d{1,3}(:\d+)?$')
@@ -181,324 +142,43 @@ class SecureCommandExecutor:
     
     @classmethod
     def build_command(cls, tool_name: str, target: str, params: Dict[str, Any]) -> List[str]:
-        """构建命令列表（不使用 shell=True）"""
+        """构建命令列表（不使用 shell=True）
+        
+        双路径路由：
+        1. 优先使用 CommandBuilder（YAML 配置驱动）
+        2. Fallback 到 _build_command_impl（硬编码，向后兼容）
+        """
         if not cls.ENABLE_TOOL_WHITELIST:
             logger.warning(f" Tool whitelist is DISABLED, allowing: {tool_name}")
-            return cls._build_command_impl(tool_name, target, params)
-        
-        if tool_name not in cls.ALLOWED_TOOLS:
+        elif tool_name not in cls.ALLOWED_TOOLS:
             raise ValueError(f"Tool '{tool_name}' not in whitelist")
-        
+
+        # 路径 1：尝试 CommandBuilder（YAML 配置）
+        try:
+            from app.services.command_builder import CommandBuilder
+            if CommandBuilder.is_available(tool_name):
+                logger.debug(f"Using CommandBuilder for tool: {tool_name}")
+                return CommandBuilder.build(tool_name, target, params)
+        except Exception as e:
+            logger.warning(f"CommandBuilder failed for '{tool_name}': {e}, falling back to hardcoded")
+
+        # 路径 2：Fallback 到硬编码实现
+        logger.debug(f"Using hardcoded command builder for tool: {tool_name}")
         return cls._build_command_impl(tool_name, target, params)
-    
+
     @classmethod
     def _build_command_impl(cls, tool_name: str, target: str, params: Dict[str, Any]) -> List[str]:
-        """实际构建命令的实现函数"""
+        """实际构建命令的实现函数
+
+        已迁移至 CommandBuilder（YAML 配置驱动）。
+        此方法作为兜底：当 CommandBuilder 未加载或工具未配置时，
+        返回最简命令 [tool_name, target]。
+        """
         if not cls.validate_target(target):
             raise ValueError(f"Invalid target format: {target}")
-        
-        allowed_params = cls.ALLOWED_PARAMS.get(tool_name, set())
-        
-        # 基础命令
-        cmd = [tool_name]
-        
-        # 特殊工具处理
-        if tool_name == 'dirsearch':
-            cmd = ['dirsearch', '-u', target]
-            if 'extensions' in params:
-                cmd.extend(['-e', str(params['extensions'])])
-            if 'wordlist' in params:
-                cmd.extend(['-w', str(params['wordlist'])])
-            if 'threads' in params:
-                cmd.extend(['-t', str(params['threads'])])
-            if params.get('recursive'):
-                cmd.append('-r')
-                
-        elif tool_name == 'gobuster':
-            mode = params.get('mode', 'dir')
-            cmd = ['gobuster', mode, '-u', target]
-            if 'wordlist' in params:
-                cmd.extend(['-w', str(params['wordlist'])])
-            if 'threads' in params:
-                cmd.extend(['-t', str(params['threads'])])
-            if 'extensions' in params:
-                cmd.extend(['-x', str(params['extensions'])])
-            if params.get('recursive'):
-                cmd.append('-r')
-                
-        elif tool_name == 'nmap':
-            cmd = ['nmap', target]
-            if 'scan_type' in params:
-                cmd.append(str(params['scan_type']))
-            if 'ports' in params:
-                cmd.extend(['-p', str(params['ports'])])
-                
-        elif tool_name == 'sqlmap':
-            cmd = ['sqlmap', '-u', target]
-            if 'level' in params:
-                cmd.extend(['--level', str(params['level'])])
-            if 'risk' in params:
-                cmd.extend(['--risk', str(params['risk'])])
-                
-        elif tool_name == 'nikto':
-            cmd = ['nikto', '-host', target]
-            if 'port' in params:
-                cmd.extend(['-port', str(params['port'])])
-            if params.get('ssl'):
-                cmd.append('-ssl')
-                
-        elif tool_name == 'ffuf':
-            cmd = ['ffuf', '-u', target]
-            if 'wordlist' in params:
-                cmd.extend(['-w', str(params['wordlist'])])
-            if 'method' in params:
-                cmd.extend(['-X', str(params['method'])])
-                
-        elif tool_name == 'nuclei':
-            cmd = ['nuclei', '-target', target]
-            if 'templates' in params:
-                cmd.extend(['-t', str(params['templates'])])
-            if 'severity' in params:
-                cmd.extend(['-severity', str(params['severity'])])
 
-        elif tool_name == 'httpx':
-            # httpx 需要 URL 作为位置参数
-            # 添加 -silent 减少不必要的输出，-timeout 设置超时
-            cmd = ['httpx', target, '-silent']
-            if 'status_code' in params:
-                cmd.append('-sc')
-            if 'title' in params:
-                cmd.append('-title')
-            if 'content_length' in params:
-                cmd.append('-cl')
-            if 'server' in params:
-                cmd.append('-server')
-
-        elif tool_name == 'katana':
-            # katana 需要 URL 作为位置参数
-            cmd = ['katana', '-u', target]
-            if 'depth' in params:
-                cmd.extend(['-d', str(params['depth'])])
-
-        elif tool_name == 'hakrawler':
-            # hakrawler 需要 URL 作为位置参数
-            cmd = ['hakrawler', '-u', target]
-            if 'depth' in params:
-                cmd.extend(['-d', str(params['depth'])])
-
-        elif tool_name == 'gau':
-            # gau 需要 URL 作为位置参数
-            cmd = ['gau', target]
-
-        elif tool_name == 'waybackurls':
-            # waybackurls 从 stdin 读取域名
-            # 使用 bash -c 方式：bash -c 'echo "domain" | waybackurls'
-            cmd = ['bash', '-c', f'echo "{target}" | waybackurls']
-
-        elif tool_name == 'feroxbuster':
-            # feroxbuster 需要 URL 作为位置参数
-            cmd = ['feroxbuster', '-u', target]
-            if 'wordlist' in params:
-                cmd.extend(['-w', str(params['wordlist'])])
-            if 'threads' in params:
-                cmd.extend(['-t', str(params['threads'])])
-            if 'depth' in params:
-                cmd.extend(['-d', str(params['depth'])])
-
-        elif tool_name == 'wpscan':
-            # wpscan 需要 --url 参数
-            cmd = ['wpscan', '--url', target]
-            if 'api_token' in params:
-                cmd.extend(['--api-token', str(params['api_token'])])
-            if 'enumerate' in params:
-                cmd.extend(['--enumerate', str(params['enumerate'])])
-
-        elif tool_name == 'dirb':
-            # dirb 需要 URL 和 wordlist
-            cmd = ['dirb', target]
-            if 'wordlist' in params:
-                cmd.append(str(params['wordlist']))
-
-        elif tool_name == 'wfuzz':
-            # wfuzz 需要 URL 参数
-            cmd = ['wfuzz', '-u', target]
-            if 'wordlist' in params:
-                cmd.extend(['-w', str(params['wordlist'])])
-            if 'hc' in params:
-                cmd.extend(['--hc', str(params['hc'])])
-
-        elif tool_name == 'jaeles':
-            # jaeles 需要 -u 参数
-            cmd = ['jaeles', 'scan', '-u', target]
-            if 'templates' in params:
-                cmd.extend(['-s', str(params['templates'])])
-
-        elif tool_name == 'dalfox':
-            # dalfox 需要 -u 参数
-            cmd = ['dalfox', 'url', target]
-            if 'blind' in params:
-                cmd.extend(['--blind', str(params['blind'])])
-
-        elif tool_name == 'arjun':
-            # arjun 需要 -u 参数
-            cmd = ['arjun', '-u', target]
-            if 'stable' in params:
-                cmd.append('-stable')
-
-        elif tool_name == 'paramspider':
-            # paramspider 需要 -d 参数 (domain)
-            cmd = ['paramspider', '-d', target]
-
-        elif tool_name == 'subfinder':
-            # subfinder 需要 -domain 参数
-            cmd = ['subfinder', '-d', target]
-            if 'sources' in params:
-                cmd.extend(['-s', str(params['sources'])])
-            if params.get('recursive'):
-                cmd.append('-recursive')
-
-        elif tool_name == 'amass':
-            # amass 需要 enum -d 参数
-            mode = params.get('mode', 'enum')
-            cmd = ['amass', mode, '-d', target]
-            if 'sources' in params:
-                cmd.extend(['-src', str(params['sources'])])
-
-        elif tool_name == 'fierce':
-            # fierce 需要 -domain 参数
-            cmd = ['fierce', '-domain', target]
-            if 'threads' in params:
-                cmd.extend(['-threads', str(params['threads'])])
-
-        elif tool_name == 'theHarvester':
-            # theHarvester 需要 -d 和 -b 参数
-            cmd = ['theHarvester', '-d', target]
-            if 'source' in params:
-                cmd.extend(['-b', str(params['source'])])
-            if 'limit' in params:
-                cmd.extend(['-l', str(params['limit'])])
-            else:
-                cmd.extend(['-l', '500'])  # 默认限制
-
-        elif tool_name == 'masscan':
-            # masscan 需要目标 ports 参数
-            cmd = ['masscan', target]
-            if 'ports' in params:
-                cmd.extend(['-p', str(params['ports'])])
-            if 'rate' in params:
-                cmd.extend(['--rate', str(params['rate'])])
-
-        elif tool_name == 'rustscan':
-            # rustscan 需要 -a 参数
-            cmd = ['rustscan', '-a', target]
-            if 'ports' in params:
-                cmd.extend(['-p', str(params['ports'])])
-            if 'top' in params:
-                cmd.extend(['--top', str(params['top'])])
-
-        elif tool_name == 'hydra':
-            # hydra 需要 -t 等参数
-            cmd = ['hydra']
-            if 'username' in params:
-                cmd.extend(['-l', str(params['username'])])
-            if 'wordlist' in params:
-                cmd.extend(['-P', str(params['wordlist'])])
-            if 'threads' in params:
-                cmd.extend(['-t', str(params['threads'])])
-            if 'timeout' in params:
-                cmd.extend(['-w', str(params['timeout'])])
-            # 服务名和 target 放在最后
-            if 'service' in params:
-                cmd.extend([target, str(params['service'])])
-            else:
-                cmd.append(target)
-
-        elif tool_name == 'hashcat':
-            # hashcat 需要 -m 和 hash 参数
-            cmd = ['hashcat']
-            if 'hash_type' in params:
-                cmd.extend(['-m', str(params['hash_type'])])
-            if 'wordlist' in params:
-                cmd.extend(['-a', '0', str(params['wordlist'])])
-            if params.get('force'):
-                cmd.append('--force')
-            # hash 值放在最后
-            cmd.append(target)
-
-        elif tool_name == 'john':
-            # john 需要格式和 wordlist
-            cmd = ['john']
-            if 'format' in params:
-                cmd.extend(['--format=' + str(params['format'])])
-            if 'wordlist' in params:
-                cmd.extend(['--wordlist=' + str(params['wordlist'])])
-            # 哈希文件或哈希值放在最后
-            cmd.append(target)
-
-        elif tool_name == 'medusa':
-            # medusa 需要 -h, -u, -P 等参数
-            cmd = ['medusa', '-h', target]
-            if 'username' in params:
-                cmd.extend(['-u', str(params['username'])])
-            if 'wordlist' in params:
-                cmd.extend(['-P', str(params['wordlist'])])
-            if 'threads' in params:
-                cmd.extend(['-t', str(params['threads'])])
-            if 'service' in params:
-                cmd.extend(['-M', str(params['service'])])
-
-        elif tool_name == 'patator':
-            # patator 需要模块参数
-            module = params.get('module', 'ftp_login')
-            cmd = ['patator', module]
-            if 'user' in params:
-                cmd.extend(['user=' + str(params['user'])])
-            if 'password' in params:
-                cmd.extend(['password=' + str(params['password'])])
-            cmd.extend(['host=' + target])
-
-        elif tool_name == 'responder':
-            # responder 需要 -I 参数
-            cmd = ['responder', '-I', target]
-            if params.get('analyze'):
-                cmd.append('-A')
-
-        elif tool_name == 'nxc':
-            # nxc (nxc) 需要协议和 target
-            protocol = params.get('protocol', 'smb')
-            cmd = ['nxc', protocol, target]
-            if 'username' in params:
-                cmd.extend(['-u', str(params['username'])])
-            if 'password' in params:
-                cmd.extend(['-p', str(params['password'])])
-
-        elif tool_name == 'crackmapexec':
-            # crackmapexec 需要协议和 target
-            protocol = params.get('protocol', 'smb')
-            cmd = ['crackmapexec', protocol, target]
-            if 'username' in params:
-                cmd.extend(['-u', str(params['username'])])
-            if 'password' in params:
-                cmd.extend(['-p', str(params['password'])])
-
-        elif tool_name == 'shodan':
-            # shodan 需要 search 参数
-            cmd = ['shodan', 'search', target]
-            if 'limit' in params:
-                cmd.extend(['--limit', str(params['limit'])])
-
-        elif tool_name == 'dotdotpwn':
-            # dotdotpwn 需要 -h 参数
-            cmd = ['dotdotpwn', '-h', target]
-
-        # 通用参数处理
-        if 'additional_args' in params:
-            additional = str(params['additional_args'])
-            for arg in additional.split():
-                if arg and not any(c in arg for c in [';', '|', '&', '$', '`']):
-                    cmd.append(arg)
-
-        return cmd
+        # 兜底：返回最简命令
+        return [tool_name, target]
 
 
 # ============================================================================

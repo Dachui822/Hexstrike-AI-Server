@@ -1,0 +1,21 @@
+tool: shodan
+binary: shodan
+target_placement: flag
+target_flag: search
+parameter_order:
+  - search
+  - target
+  - limit
+  - additional_args
+parameters:
+  search:
+    type: positional
+    required: false
+    default: search
+  limit:
+    flag: --limit
+    type: integer
+    required: false
+  additional_args:
+    type: string
+    required: false

@@ -1,0 +1,21 @@
+tool: jaeles
+binary: jaeles
+target_placement: flag
+target_flag: -u
+parameter_order:
+  - scan
+  - templates
+  - target
+  - additional_args
+parameters:
+  scan:
+    type: positional
+    required: false
+    default: scan
+  templates:
+    flag: -s
+    type: string
+    required: false
+  additional_args:
+    type: string
+    required: false

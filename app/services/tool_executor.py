@@ -118,315 +118,16 @@ class ToolExecutor:
             meta_params = {'async', 'priority', 'use_recovery'}
             valid_params = {k: v for k, v in params.items() if k not in meta_params}
 
-            # 3. 构建命令 (安全拼接，兼容短参数如 -e, -t, -sV)
-            # 针对特定工具的参数格式进行适配 (修复 dirsearch 等工具缺少 -u 参数的问题)
+            # 3. 构建命令 (委托给 CommandBuilder，统一使用 shell=False)
+            from app.services.command_builder import CommandBuilder
 
-            # 默认命令基础
-            cmd = f"{tool_name} {target}"
+            try:
+                cmd_list = CommandBuilder.build(tool_name, target, valid_params)
+            except ValueError as e:
+                return {"success": False, "error": f"Command build failed: {e}"}
 
-            # 特殊处理 dirsearch (需要 -u)
-            if tool_name == 'dirsearch':
-                # 确保 target 不为空
-                if not target or target.strip() == '':
-                    return {"success": False, "error": "URL target is missing for dirsearch. Please provide a valid URL."}
-                cmd = f"dirsearch -u {target}"
-                if 'extensions' in valid_params:
-                    cmd += f" -e {valid_params.pop('extensions')}"
-                if 'wordlist' in valid_params:
-                    cmd += f" -w {valid_params.pop('wordlist')}"
-                if 'threads' in valid_params:
-                    cmd += f" -t {valid_params.pop('threads')}"
-                if 'recursive' in valid_params and valid_params.pop('recursive') in [True, 'true', '1']:
-                    cmd += " -r"
-            
-            # 特殊处理 gobuster (需要 mode 子命令和 -u)
-            # 命令格式：gobuster <mode> -u <url> [options]
-            # mode: dir, dns, vhost, fuzz, tftp, s3, gcs
-            elif tool_name == 'gobuster':
-                mode = valid_params.pop('mode', 'dir')
-                cmd = f"gobuster {mode} -u {target}"
-                if 'wordlist' in valid_params:
-                    cmd += f" -w {valid_params.pop('wordlist')}"
-                if 'threads' in valid_params:
-                    cmd += f" -t {valid_params.pop('threads')}"
-                if 'extensions' in valid_params:
-                    cmd += f" -x {valid_params.pop('extensions')}"
-                if 'recursive' in valid_params and valid_params.pop('recursive') in [True, 'true', '1']:
-                    cmd += " -r"
-                if 'status_codes' in valid_params:
-                    cmd += f" -s {valid_params.pop('status_codes')}"
-                if 'method' in valid_params:
-                    cmd += f" -m {valid_params.pop('method')}"
-
-            # 特殊处理 subfinder (需要 -d domain)
-            elif tool_name == 'subfinder':
-                cmd = f"subfinder -d {target}"
-                if 'sources' in valid_params:
-                    cmd += f" -s {valid_params.pop('sources')}"
-                if 'recursive' in valid_params and valid_params.pop('recursive') in [True, 'true', '1']:
-                    cmd += " -recursive"
-
-            # 特殊处理 amass (需要 enum -domain)
-            elif tool_name == 'amass':
-                cmd = f"amass enum -d {target}"
-                if 'mode' in valid_params:
-                    mode = valid_params.pop('mode')
-                    if mode == 'passive':
-                        cmd = f"amass enum -passive -d {target}"
-                    elif mode == 'active':
-                        cmd = f"amass enum -active -d {target}"
-                if 'sources' in valid_params:
-                    cmd += f" -src {valid_params.pop('sources')}"
-
-            # 特殊处理 fierce (需要 -domain)
-            elif tool_name == 'fierce':
-                cmd = f"fierce -domain {target}"
-                if 'threads' in valid_params:
-                    cmd += f" --threads {valid_params.pop('threads')}"
-
-            # 特殊处理 theHarvester (需要 -d domain -b source)
-            elif tool_name == 'theHarvester':
-                source = valid_params.pop('source', 'all')
-                cmd = f"theHarvester -d {target} -b {source}"
-                if 'limit' in valid_params:
-                    cmd += f" -l {valid_params.pop('limit')}"
-
-            # 特殊处理 httpx (格式：httpx [OPTIONS] URL)
-            elif tool_name == 'httpx':
-                cmd = f"httpx {target}"
-                if 'status_code' in valid_params and valid_params.pop('status_code') in [True, 'true', '1']:
-                    cmd += " -sc"
-                if 'title' in valid_params and valid_params.pop('title') in [True, 'true', '1']:
-                    cmd += " -title"
-                if 'content_length' in valid_params and valid_params.pop('content_length') in [True, 'true', '1']:
-                    cmd += " -cl"
-                if 'server' in valid_params and valid_params.pop('server') in [True, 'true', '1']:
-                    cmd += " -server"
-
-            # 特殊处理 nmap (支持 scan_type 和 ports)
-            elif tool_name == 'nmap':
-                cmd = f"nmap {target}"
-                if 'scan_type' in valid_params:
-                    cmd += f" {valid_params.pop('scan_type')}"
-                if 'ports' in valid_params:
-                    cmd += f" -p {valid_params.pop('ports')}"
-
-            # 特殊处理 sqlmap (需要 -u)
-            elif tool_name == 'sqlmap':
-                cmd = f"sqlmap -u {target}"
-                if 'level' in valid_params:
-                    cmd += f" --level={valid_params.pop('level')}"
-                if 'risk' in valid_params:
-                    cmd += f" --risk={valid_params.pop('risk')}"
-
-            # 特殊处理 dirb (需要 URL)
-            elif tool_name == 'dirb':
-                cmd = f"dirb {target}"
-                if 'wordlist' in valid_params:
-                    cmd += f" {valid_params.pop('wordlist')}"
-                if 'extensions' in valid_params:
-                    cmd += f" -e {valid_params.pop('extensions')}"
-                if 'recursive' in valid_params and valid_params.pop('recursive') in [True, 'true', '1']:
-                    cmd += " -r"
-
-            # 特殊处理 nikto (需要 -host 参数)
-            # 命令格式：nikto -host <url> [options]
-            elif tool_name == 'nikto':
-                cmd = f"nikto -host {target}"
-                if 'port' in valid_params:
-                    cmd += f" -port {valid_params.pop('port')}"
-                if 'ssl' in valid_params and valid_params.pop('ssl') in [True, 'true', '1']:
-                    cmd += " -ssl"
-                if 'timeout' in valid_params:
-                    cmd += f" -timeout {valid_params.pop('timeout')}"
-                if 'useragent' in valid_params:
-                    cmd += f" -useragent {valid_params.pop('useragent')}"
-                if 'tuning' in valid_params:
-                    cmd += f" -Tuning {valid_params.pop('tuning')}"
-                if 'output' in valid_params:
-                    cmd += f" -output {valid_params.pop('output')}"
-                if 'format' in valid_params:
-                    cmd += f" -Format {valid_params.pop('format')}"
-                if 'vhost' in valid_params:
-                    cmd += f" -vhost {valid_params.pop('vhost')}"
-                if 'id' in valid_params:
-                    cmd += f" -id {valid_params.pop('id')}"
-
-            # 特殊处理 ffuf (需要 -u)
-            elif tool_name == 'ffuf':
-                cmd = f"ffuf -u {target}"
-                if 'wordlist' in valid_params:
-                    cmd += f" -w {valid_params.pop('wordlist')}"
-                if 'method' in valid_params:
-                    cmd += f" -X {valid_params.pop('method')}"
-                if 'headers' in valid_params:
-                    cmd += f" -H {valid_params.pop('headers')}"
-
-            # 特殊处理 feroxbuster (需要 -u)
-            elif tool_name == 'feroxbuster':
-                cmd = f"feroxbuster -u {target}"
-                if 'wordlist' in valid_params:
-                    cmd += f" -w {valid_params.pop('wordlist')}"
-                if 'threads' in valid_params:
-                    cmd += f" -t {valid_params.pop('threads')}"
-                if 'depth' in valid_params:
-                    cmd += f" -d {valid_params.pop('depth')}"
-
-            # 特殊处理 wpscan (需要 --url)
-            elif tool_name == 'wpscan':
-                cmd = f"wpscan --url {target}"
-                if 'api_token' in valid_params:
-                    cmd += f" --api-token {valid_params.pop('api_token')}"
-                if 'enumerate' in valid_params:
-                    cmd += f" --enumerate {valid_params.pop('enumerate')}"
-                if 'plugins_detection' in valid_params:
-                    cmd += f" --plugins-detection {valid_params.pop('plugins_detection')}"
-
-            # 特殊处理 nuclei (需要 -target)
-            elif tool_name == 'nuclei':
-                cmd = f"nuclei -target {target}"
-                if 'templates' in valid_params:
-                    cmd += f" -t {valid_params.pop('templates')}"
-                if 'severity' in valid_params:
-                    cmd += f" -severity {valid_params.pop('severity')}"
-                if 'tags' in valid_params:
-                    cmd += f" -tags {valid_params.pop('tags')}"
-
-            # 特殊处理 katana (需要 -u)
-            elif tool_name == 'katana':
-                cmd = f"katana -u {target}"
-                if 'depth' in valid_params:
-                    cmd += f" -d {valid_params.pop('depth')}"
-                if 'scope' in valid_params:
-                    cmd += f" -scope {valid_params.pop('scope')}"
-
-            # 特殊处理 hakrawler (从 stdin 读取 URL，使用管道传递)
-            elif tool_name == 'hakrawler':
-                cmd = f"echo '{target}' | hakrawler"
-                if 'depth' in valid_params:
-                    cmd += f" -depth {valid_params.pop('depth')}"
-
-            # 特殊处理 hydra (需要 target 和 service)
-            elif tool_name == 'hydra':
-                service = valid_params.pop('service', 'ssh')
-                username = valid_params.pop('username', 'root')
-                wordlist = valid_params.pop('wordlist', '/usr/share/wordlists/rockyou.txt')
-                cmd = f"hydra -l {username} -P {wordlist} {target} {service}"
-                if 'threads' in valid_params:
-                    cmd += f" -t {valid_params.pop('threads')}"
-                if 'timeout' in valid_params:
-                    cmd += f" -w {valid_params.pop('timeout')}"
-
-            # 特殊处理 hashcat (需要 hash_type 和 wordlist)
-            elif tool_name == 'hashcat':
-                hash_type = valid_params.pop('hash_type', '0')
-                wordlist = valid_params.pop('wordlist', '/usr/share/wordlists/rockyou.txt')
-                cmd = f"hashcat -m {hash_type} -a 0 {target} {wordlist}"
-                if 'force' in valid_params and valid_params.pop('force') in [True, 'true', '1']:
-                    cmd += " --force"
-
-            # 特殊处理 john (需要 wordlist)
-            elif tool_name == 'john':
-                wordlist = valid_params.pop('wordlist', '/usr/share/wordlists/rockyou.txt')
-                cmd = f"john --wordlist={wordlist} {target}"
-                if 'format' in valid_params:
-                    cmd += f" --format={valid_params.pop('format')}"
-
-            # 特殊处理 rustscan (需要 -a)
-            elif tool_name == 'rustscan':
-                cmd = f"rustscan -a {target}"
-                if 'ports' in valid_params:
-                    cmd += f" -p {valid_params.pop('ports')}"
-                if 'top' in valid_params:
-                    cmd += f" --top {valid_params.pop('top')}"
-
-            # 特殊处理 masscan (需要 -p)
-            elif tool_name == 'masscan':
-                cmd = f"masscan {target}"
-                if 'ports' in valid_params:
-                    cmd += f" -p {valid_params.pop('ports')}"
-                if 'rate' in valid_params:
-                    cmd += f" --rate {valid_params.pop('rate')}"
-
-            # 特殊处理 responder (需要 -I 接口)
-            elif tool_name == 'responder':
-                interface = valid_params.pop('interface', 'eth0')
-                cmd = f"responder -I {interface}"
-                if 'analyze' in valid_params and valid_params.pop('analyze') in [True, 'true', '1']:
-                    cmd += " -A"
-                else:
-                    cmd += " -wrf"
-
-            # 特殊处理 nxc/crackmapexec (需要 target 和协议)
-            elif tool_name in ['nxc', 'crackmapexec']:
-                protocol = valid_params.pop('protocol', 'smb')
-                cmd = f"nxc {protocol} {target}"
-                if 'username' in valid_params:
-                    cmd += f" -u {valid_params.pop('username')}"
-                if 'password' in valid_params:
-                    cmd += f" -p {valid_params.pop('password')}"
-
-            # 特殊处理 shodan (需要 query)
-            elif tool_name in ['shodan', 'shodan_search']:
-                cmd = f"shodan host {target}"
-                if 'limit' in valid_params:
-                    cmd += f" --limit {valid_params.pop('limit')}"
-
-            # 特殊处理 wfuzz (需要 -u 和 -w)
-            elif tool_name == 'wfuzz':
-                cmd = f"wfuzz -u {target}"
-                if 'wordlist' in valid_params:
-                    cmd += f" -w {valid_params.pop('wordlist')}"
-                if 'hc' in valid_params:
-                    cmd += f" --hc {valid_params.pop('hc')}"
-
-            # 特殊处理 jaeles (需要 -t 和 -l)
-            elif tool_name == 'jaeles':
-                cmd = f"jaeles scan -t {target}"
-                if 'templates' in valid_params:
-                    cmd += f" -l {valid_params.pop('templates')}"
-
-            # 特殊处理 dalfox (需要 -u)
-            elif tool_name == 'dalfox':
-                cmd = f"dalfox url {target}"
-                if 'blind' in valid_params:
-                    cmd += f" --blind {valid_params.pop('blind')}"
-
-            # 特殊处理 arjun (需要 -u)
-            elif tool_name == 'arjun':
-                cmd = f"arjun -u {target}"
-                if 'stable' in valid_params and valid_params.pop('stable') in [True, 'true', '1']:
-                    cmd += " --stable"
-
-            # 特殊处理 medusa (需要 -H 和 -M)
-            elif tool_name == 'medusa':
-                service = valid_params.pop('service', 'ssh')
-                username = valid_params.pop('username', 'root')
-                wordlist = valid_params.pop('wordlist', '/usr/share/wordlists/rockyou.txt')
-                cmd = f"medusa -h {target} -u {username} -P {wordlist} -M {service}"
-                if 'threads' in valid_params:
-                    cmd += f" -t {valid_params.pop('threads')}"
-
-            # 特殊处理 patator (需要 host 和 port)
-            elif tool_name == 'patator':
-                module = valid_params.pop('module', 'ssh_login')
-                cmd = f"patator {module} host={target}"
-                if 'user' in valid_params:
-                    cmd += f" user={valid_params.pop('user')}"
-                if 'password' in valid_params:
-                    cmd += f" password={valid_params.pop('password')}"
-
-            # 处理 additional_args (所有工具通用，追加到末尾)
-            additional_args = valid_params.pop('additional_args', '')
-            if additional_args:
-                cmd += f" {additional_args}"
-            
-            # 处理剩余参数 (通用拼接，不强制加 --)
-            if valid_params:
-                param_str = " ".join([f"{k} {v}" for k, v in valid_params.items()])
-                cmd += f" {param_str}"
-
-            logger.info(f"Executing: {cmd} [Task: {task_id}] [Params: {valid_params}]")
+            cmd_str = " ".join(cmd_list)
+            logger.info(f"Executing: {cmd_str} [Task: {task_id}]")
 
             output_path = f"/tmp/{task_id}.log"
             stdout_reader = None
@@ -438,8 +139,8 @@ class ToolExecutor:
                 if os.name == 'nt':  # Windows
                     creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
                     process = subprocess.Popen(
-                        cmd,
-                        shell=True,
+                        cmd_list,
+                        shell=False,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         text=True,
@@ -454,8 +155,8 @@ class ToolExecutor:
                             pass  # 非 root 用户可能无法设置 nice 值
 
                     process = subprocess.Popen(
-                        cmd,
-                        shell=True,
+                        cmd_list,
+                        shell=False,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
                         text=True,

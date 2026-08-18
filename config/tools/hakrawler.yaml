@@ -1,0 +1,15 @@
+tool: hakrawler
+binary: hakrawler
+target_placement: flag
+target_flag: -u
+parameters:
+  depth:
+    flag: -d
+    type: integer
+    required: false
+    validators:
+      min: 1
+      max: 10
+  additional_args:
+    type: string
+    required: false

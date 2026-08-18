@@ -1,0 +1,17 @@
+tool: theHarvester
+binary: theHarvester
+target_placement: flag
+target_flag: -d
+parameters:
+  source:
+    flag: -b
+    type: string
+    required: false
+  limit:
+    flag: -l
+    type: integer
+    required: false
+    default: 500
+  additional_args:
+    type: string
+    required: false
